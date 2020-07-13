@@ -75,8 +75,8 @@
 
     ⎕IO←⎕ML←1
 
-    :Field Public DEBUG←1               ⍝ set to 1 to log debug information
-    :Field Public TRACE←1               ⍝ set to 1 to fully trace the RIDE protocol
+    :Field Public DEBUG←0               ⍝ set to 1 to log debug information
+    :Field Public TRACE←0               ⍝ set to 1 to fully trace the RIDE protocol
     :Field Public TIMEOUT←200          ⍝ timeout in milliseconds for responses that don't require significant computation - 200 is required on windows VM
 
     :Field Private Shared ReadOnly LF←⎕UCS 10
@@ -92,11 +92,11 @@
     :Field Private Shared DRC←⎕NULL              ⍝ Conga namespace - loaded from conga workspace
     :Field Private Shared APLProcess←⎕NULL       ⍝ APLProcess namespace - loaded from APLProcess.dyalog
 
-    :Field Private Shared ReadOnly ERROR_OK←0 '' ''  ⍝ error←(EN EM Message)
-    :Field Private Shared ReadOnly ERROR_STOP←1001 '' ''  ⍝ error returned when hitting a breakpoint
-    :Field Private Shared ReadOnly NO_ERROR←0⍴⊂ERROR_OK       ⍝ no error produces this list of errors
-    :Field Private Shared ReadOnly ERROR_BREAK←,⊂ERROR_STOP   ⍝ simple breakpoint produces this list of errors
-    :Field Private Shared ReadOnly NO_WIN←0⍴⎕NULL   ⍝ empty list of windows (force prototype to ⎕NULL)
+    :Field Public Shared ReadOnly ERROR_OK←0 '' ''  ⍝ error←(EN EM Message)
+    :Field Public Shared ReadOnly ERROR_STOP←1001 '' ''  ⍝ error returned when hitting a breakpoint
+    :Field Public Shared ReadOnly NO_ERROR←0⍴⊂ERROR_OK       ⍝ no error produces this list of errors
+    :Field Public Shared ReadOnly ERROR_BREAK←,⊂ERROR_STOP   ⍝ simple breakpoint produces this list of errors
+    :Field Public Shared ReadOnly NO_WIN←0⍴⎕NULL   ⍝ empty list of windows (force prototype to ⎕NULL)
 
     :Field Private WINS←NO_WIN                  ⍝ list of editor/tracer windows currently opened
     ⍝ each win is a namespace with:
