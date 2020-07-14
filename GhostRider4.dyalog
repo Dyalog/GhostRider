@@ -156,7 +156,7 @@
     Resignal←⎕SIGNAL∘{⍵/⊂⎕DMX.(('EN'EN)('EM'EM)('Message'Message))}
     Signal←⎕SIGNAL∘{(en em msg)←⍵ ⋄ ('EN' en)('EM' em)('Message'msg)}
 
-    Error←{IsInteger ⍺: ((⍺+2)⊃⎕SI)∇⍵ ⋄ ((⍕⎕THIS),' ',⍺,' failed: ',⍕⍵)⎕SIGNAL ERRNO}
+    Error←{((⍕⎕THIS),' ',⍺,' failed: ',⍕⍵)⎕SIGNAL ERRNO}
     Log←{⎕←(⍕⎕THIS),' ',⍺,': ',,⍕⍵ ⋄ 1:_←⍵}
     LogWarn←{⍺←'' ⋄ 1:_←('Warning',(~0∊⍴⍺)/' ',⍺)Log ⍵}   ⍝ always warn
     LogInfo←{⍺←'' ⋄ DEBUG:_←('Info',(~0∊⍴⍺)/' ',⍺)Log ⍵ ⋄ 1:_←⍵}
@@ -476,7 +476,7 @@
               done∧←∨/prompt∊waitprompts
           :EndIf
       :Until done
-      prompt←⊃⌽¯1,prompt~¯1  ⍝ only the last prompt set is interesting
+      prompt←⊃⌽prompt  ⍝ only the last prompt is interesting
       wins←∪wins  ⍝ window may get several messages e.g. UpdateWindow+SetHighlightLine
     ∇
 
@@ -570,15 +570,16 @@
       list~←wins ⋄ :If 0∊⍴list ⋄ list←NO_WIN ⋄ :EndIf
       :If default ⋄ WINS←list ⋄ :EndIf
     ∇
-    ∇ CloseWindow win;errors;message;messages;ok;output;prompt;wins
+    ∇ CloseWindow win;errors;message;messages;ok;output;wins
     ⍝ Close an edit or tracer window
       :Access Public
+      ⍝ ["CloseWindow",{"win":123}] // RIDE -> Interpreter  and  Interpreter -> RIDE
       :If ~IsWin win ⋄ 'CloseWindow'Error'Argument must be a window' ⋄ :EndIf
       :Select win.type
       :CaseList 'Editor' 'Tracer'
           Send message←'["CloseWindow",{"win":',(1 ⎕JSON win.id),'}]'
-          (prompt output wins errors)←⍬ win WaitSub'CloseWindow'
-          ok←(prompt≡¯1)∧(output≡'')∧(errors≡NO_ERROR)∧(wins≡,⊂win)
+          (output wins errors)←'CloseWindow'GatherResults 0 1
+          ok←(output≡'')∧(errors≡NO_ERROR)∧(wins≡,⊂win)
           :If ok∧(~IsWin win) ⍝ actually closed the window
           :ElseIf ok∧(IsWin win) ⋄ :AndIf 'Tracer'≡win.type  ⍝ edit turned back into a tracer
           :Else ⋄ 'CloseWindow'Error'Failed to close window ',⍕win.id
@@ -595,7 +596,7 @@
       :Access Public
       :If ~0∊⍴WINS ⋄ CloseWindow¨WINS ⋄ :EndIf
     ∇
-    ∇ CloseAllWindows;errors;messages;output;prompt;toclose;wins
+    ∇ CloseAllWindows;errors;messages;output;toclose;wins
     ⍝ Close all edit/tracer windows with special RIDE protocol message
       :Access Public
       Send'["CloseAllWindows",{}]'
@@ -604,14 +605,9 @@
       :EndIf
       :If 0∊⍴toclose ⋄ EmptyQueue'CloseAllWindows' ⋄ :EndIf  ⍝ ensure no response
       :While ~0∊⍴toclose
-          (prompt output wins errors)←⍬ 1 WaitSub'CloseAllWindows'
-          :If prompt≢¯1 ⋄ 'CloseAllWindows'Error'Produced unexpected prompt: ',⍕prompt
-          :ElseIf ~0∊⍴errors ⋄ 'CloseAllWindows'Error'Produced unexpected errors: ',⍕errors
-          :ElseIf ~0∊⍴output ⋄ 'CloseAllWindows'Error'Produced unexpected output: ',⍕output
-          :ElseIf 1≠≢wins ⋄ :OrIf ~IsWin⊃wins ⋄ 'CloseAllWindows'Error'Did not produce 1 window'
-          :EndIf
-          :If (prompt≢¯1)∨(output≢'')∨(errors≢NO_ERROR)∨(~∧/wins∊toclose)
-              'CloseAllWindows'Error'Unexpected output'
+          (output wins errors)←'CloseAllWindows'GatherResults 0 1
+          :If (output≢'')∨(errors≢NO_ERROR)∨(~∧/wins∊toclose)
+              'CloseAllWindows'Error'Touched other windows: ',(⍕(wins~toclose).id)
           :EndIf
           toclose~←wins
       :EndWhile
@@ -621,29 +617,26 @@
 
 
 
-    ∇ win←{type}ED name;errors;expr;output;prompt;types;wins
-    ⍝ Cover for ⎕ED to open one editor window, allowing to specify its type if name is undefined
+    ∇ wins←{types}ED names;errors;expr;output;wins
+    ⍝ Cover for ⎕ED to open one or more editor window
+    ⍝ Remember that ⎕ED silently fails on invalid names
+    ⍝ so (≢wins) may be less than (≢names)
       :Access Public
-      :If 0=⎕NC'type' ⋄ type←''
-      :ElseIf ~IsString name ⋄ 'ED'Error'Right argument must be a string'
-      :ElseIf ¯1=⎕NC name ⋄ 'ED'Error'Invalid name: ',name   ⍝ ⎕ED silently fails but we don't
-      :ElseIf ~type∊types←'∇→∊-⍟○∘' ⋄ 'ED'Error'Left argument must be a character amongst ',types
-      :Else ⋄ type←Stringify type
+      :If 0=⎕NC'types' ⋄ types←''
+      :ElseIf ~IsSource names←,⊆,names ⋄ 'ED'Error'Right argument must be a string or list of strings'
+      :ElseIf ~IsString types←,types ⋄ 'ED'Error'Left argument must be a string'
+      :Else ⋄ types←⍕Stringify¨types
       :EndIf
-      expr←type,'⎕ED',⍕Stringify¨names
+      expr←types,'⎕ED',⍕Stringify¨names
       EmptyQueue'ED'
       Send'["Execute",{"text":',(1 ⎕JSON expr,LF),',"trace":false}]'
-      (prompt output wins errors)←⍬ 1 WaitSub'ED'
-      :If prompt≢¯1 ⋄ 'ED'Error'Produced unexpected prompt: ',⍕prompt
-      :ElseIf ~0∊⍴errors ⋄ 'ED'Error'Produced unexpected errors: ',⍕errors
+      (output wins errors)←'ED'GatherResults 1 1
+      :If ~0∊⍴errors ⋄ 'ED'Error'Produced unexpected error: ',⍕errors
       :ElseIf ~0∊⍴output ⋄ 'ED'Error'Produced unexpected output: ',⍕output
-      :ElseIf 1≠≢wins ⋄ 'ED'Error'Did not produce 1 window'
-      :ElseIf wins.type≢,⊂'Editor' ⋄ 'ED'Error'Did not produce an edit window'
-      :ElseIf wins.title≢,⊂name ⋄ 'ED'Error'Did not edit expected name'
-      :EndIf ⋄ win←⊃wins
+      :EndIf
     ∇
 
-    ∇ win←EditOpen name;errors;ok;output;prompt;wins
+    ∇ win←EditOpen name;errors;ok;output;wins
     ⍝ Edit a name, get a window.
     ⍝ To specify the type of entity to edit, use ED instead.
       :Access Public
@@ -654,14 +647,13 @@
       win←NO_WIN  ⍝ failed to open anything
       EmptyQueue'EditOpen'
       Send'["Edit",{"win":0,"text":',(1 ⎕JSON name),',"pos":1,"unsaved":{}}]'  ⍝ ⎕BUG doesn't work if unsaved not specified ? ⎕DOC : win must be 0 to create a new window
-      (prompt output wins errors)←⍬ 1 WaitSub'EditOpen'
-      :If prompt≢¯1 ⋄ 'EditOpen'Error'Produced unexpected prompt: ',⍕prompt
-      :ElseIf NO_ERROR≢errors ⋄ 'EditOpen'Error'Produced unexpected error: ',⍕errors
+      (output wins errors)←'EditOpen'GatherResults 0 1
+      :If NO_ERROR≢errors ⋄ 'EditOpen'Error'Produced unexpected error: ',⍕errors
       :ElseIf 0≠≢output ⋄ 'EditOpen'Error'Produced unexpected output: ',⍕output
       :ElseIf 1≠≢wins ⋄ 'EditOpen'Error'Failed to open 1 window'
-      :ElseIf wins.type≢,⊂'Editor' ⋄ 'EditOpen'Error'Did not produce an edit window'
       :ElseIf wins.title≢,⊂name ⋄ 'EditOpen'Error'Did not edit expected name'
-      :EndIf ⋄ win←⊃wins
+      :Else ⋄ win←⊃wins
+      :EndIf
     ∇
 
     ∇ {ok}←win EditFix src;arguments;command;errors;messages;output;stops;wins

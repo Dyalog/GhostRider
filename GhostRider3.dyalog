@@ -21,32 +21,7 @@
 
 ⍝ Public API :
 ⍝
-⍝ RIDE commands usually wait for a response,
-⍝ which may be changing the prompt type, or touching a window (edit, tracer, dialog, etc.).
-⍝ This is specified by a 2-element vector :
-⍝ <wait> ←→ (waitprompts waitwins)
-⍝ - waitprompts is a list of prompt types to wait for
-⍝ - waitwins is either a number of windows to wait for, or a list of windows to wait for.
-⍝ Both conditions are awaited for (the conjunction is AND and not OR)
-⍝ If nothing is waited for, then we wait for the first touched window OR non-zero prompt
-⍝
-⍝ RIDE commands return a 4-element result :
-⍝ <result> ←→ (prompt output wins errors)
-⍝ - prompt is the last prompt that was set (each is integer, see below)
-⍝ - output is the string of session output (including newlines)
-⍝ - wins is list of opened windows (each is a namespace - see below)
-⍝ - errors is the list of ⎕SIGNAL-ed errors (there should be one at most)
-⍝
-⍝ Valid prompt types are :
-⍝ - ¯1 = prompt unset
-⍝ - 0 = no prompt
-⍝ - 1 = the usual 6-space APL prompt (a.k.a. Descalc or "desktop calculator")
-⍝ - 2 = Quad(⎕) input
-⍝ - 3 = ∇ line editor
-⍝ - 4 = Quote-Quad(⍞) input
-⍝ - 5 = any prompt type unforeseen here.
-⍝
-⍝ Each window is a namespace with the following fields:
+⍝ each window is a namespace with the following fields:
 ⍝ - id: integer identifying the window
 ⍝ - type : one of
 ⍝          'Editor' 'Tracer' (IDE windows)
@@ -61,13 +36,12 @@
 ⍝ - index (Options and task only): list of index value for each option (list of integers)
 ⍝ - value (String only): initial value of the text field
 ⍝ - default (String only): default value of the text field
+
 ⍝
-⍝ errors is a 3-element vector akin to ⎕DMX fields
-⍝ - EN: error number (scalar integer)
-⍝ - EM: error message (string)
-⍝ - Message: detailed message (string)
-⍝
-⍝ <result> ← {<wait>} Execute expr  ⍝ Execute an APL expression
+⍝ (output wins errors)←Execute expr  ⍝ execute an APL expression
+⍝ - output is the string of session output (including newlines)
+⍝ - wins is list of opened windows (each is a namespace - see WINS)
+⍝ - errors is the list of ⎕SIGNAL-ed errors (there should be one at most)
 ⍝
 ⍝ wins←Windows                  ⍝ List all open windows
 ⍝ CloseWindow win               ⍝ Close a window
@@ -81,6 +55,7 @@
 ⍝ win←{types}ED names           ⍝ Cover for ⎕ED that returns the created windows
 ⍝ src←Reformat src              ⍝ Reformat code
 ⍝
+⍝ The following tracer functions run code and return the same result as Execute.
 ⍝ Trace expr                    ⍝ Start tracing an expression
 ⍝ TraceRun win                  ⍝ Run current line and move to next line (step over)
 ⍝ TraceInto win                 ⍝ Run current line and trace into callees (step into)
@@ -156,7 +131,7 @@
     Resignal←⎕SIGNAL∘{⍵/⊂⎕DMX.(('EN'EN)('EM'EM)('Message'Message))}
     Signal←⎕SIGNAL∘{(en em msg)←⍵ ⋄ ('EN' en)('EM' em)('Message'msg)}
 
-    Error←{IsInteger ⍺: ((⍺+2)⊃⎕SI)∇⍵ ⋄ ((⍕⎕THIS),' ',⍺,' failed: ',⍕⍵)⎕SIGNAL ERRNO}
+    Error←{((⍕⎕THIS),' ',⍺,' failed: ',⍕⍵)⎕SIGNAL ERRNO}
     Log←{⎕←(⍕⎕THIS),' ',⍺,': ',,⍕⍵ ⋄ 1:_←⍵}
     LogWarn←{⍺←'' ⋄ 1:_←('Warning',(~0∊⍴⍺)/' ',⍺)Log ⍵}   ⍝ always warn
     LogInfo←{⍺←'' ⋄ DEBUG:_←('Info',(~0∊⍴⍺)/' ',⍺)Log ⍵ ⋄ 1:_←⍵}
@@ -170,12 +145,10 @@
     Stringify←{'''',((1+⍵='''')/⍵),''''}
 
     IsStops←{(1≡≢⍴⍵)∧(1≡≡⍵)∧(⍬≡0⍴⍵)}
-    IsPrompts←{1≡∧/⍵∊(~⍺)↓¯1 0 1 2 3 4 5}  ⍝ ⍺←1 to allow ¯1 (prompt unset)
     IsSource←{(1≡≢⍴⍵)∧(2≡≡⍵)∧(∧/''∘≡¨0⍴¨⍵)}
     IsWin←{⍵∊WINS}
     IsString←{(1≡≢⍴⍵)∧(1≡≡⍵)∧(''≡0⍴⍵)}
     IsInteger←{(0=≡⍵)∧(0=≡⍵)∧(⍬≡0⍴⍵):⍵≡⌊⍵ ⋄ 0}
-
 
     ∇ ok←LoadLibraries;Tool
     ⍝ Failure to load library will cause ⎕SE.SALT.Load to error
@@ -335,6 +308,22 @@
       messages←0 Read 1  ⍝ do not wait for new messages
       :If ~0∊⍴messages ⋄ msg LogInfo'Message queue not empty: ',⍕⊃¨messages ⋄ :EndIf
     ∇
+    ∇ messages←ignored Ignore messages
+      messages/⍨←~(⊃¨messages)∊⊆ignored
+    ∇
+    ∇ message←{ignored}WaitFor commands;messages
+    ⍝ wait for a single command
+      :If 0=⎕NC'ignored' ⋄ ignored←0⍴⊂'' ⋄ :EndIf
+      ignored←(×⍴ignored){(⍺×⍴⍵)⍴⍵}⊆ignored  ⍝ '' becomes (0⍴⊂'')
+      :Repeat ⋄ messages←ignored Ignore Read 1 ⋄ :Until ~0∊⍴messages ⍝ blocking wait for a non-ignored message
+      :If 1≠≢messages
+      :OrIf ~(⊂⊃⊃messages)∊(⊆commands)
+          'WaitFor'Error'Could not get message ',(⍕commands),', got: ',⍕⊃¨messages
+          message←''⎕NULL
+      :Else
+          message←⊃messages
+      :EndIf
+    ∇
 
 
 
@@ -357,8 +346,8 @@
       :Else ⋄ id←¯1+⌊/0,WINS.id
       :EndIf
     ∇
-    ∇ (prompt output wins errors)←fn ProcessMessages messages;arguments;command;em;en;msg;win
-      prompt←¯1             ⍝ ¯1 = prompt unset, 0 = no prompt, 1 = the usual 6-space APL prompt (a.k.a. Descalc or "desktop calculator"), 2 = Quad(⎕) input, 3 = ∇ line editor, 4 = Quote-Quad(⍞) input, 5 = any prompt type unforeseen here.
+    ∇ (done output wins errors)←fn ProcessMessages messages;arguments;command;em;en;msg;win
+      done←0                ⍝ 1 if returned to the 6-space prompt
       output←''             ⍝ session output (string with newlines)
       wins←NO_WIN           ⍝ saved/modified windows (list of namespaces from WINS)
       errors←NO_ERROR       ⍝ list of ⎕DMX.(EN EM Message)
@@ -366,8 +355,11 @@
           win←NO_WIN
           :Select command
           :CaseList 'CanAcceptInput' 'FocusThread' 'EchoInput' 'UpdateDisplayName'  ⍝ these are ignored
-          :Case 'SetPromptType'
-              prompt←arguments.type
+          :Case 'SetPromptType'  ⍝ 0 no prompt, 1 the usual 6-space APL prompt (a.k.a. Descalc or "desktop calculator"), 2 Quad(⎕) input, 3 line editor, 4 Quote-Quad(⍞) input, 5 any prompt type unforeseen here.
+              :If ~arguments.type∊0 1
+                  fn Error'Unsupported prompt type: ',(1+arguments.type)⊃'blocked' 'normal' '⎕' '∇' '⍞' 'unknown'
+              :EndIf
+              done←0≠arguments.type ⍝ 0 is not ready for next execution
           :Case 'AppendSessionOutput'
               output,←⊂{LF=⊃⌽⍵:NL@(≢⍵)⊢⍵ ⋄ ⍵}arguments.result
           :Case 'HadError'  ⍝ ⎕SIGNAL within APL execution
@@ -454,92 +446,69 @@
     ∇
 
 
-
-
-    ∇ (prompt output wins errors)←{wait}WaitSub fn;done;nothing;numwins;waitprompts;waitwins
-      :If 0=⎕NC'wait' ⋄ :OrIf 0∊⍴wait ⋄ (waitprompts waitwins)←⍬ 0  ⍝ wait for nothing - first non-zero prompt or touched window
-      :Else ⋄ (waitprompts waitwins)←wait  ⍝ wait for both conditions
-      :EndIf
-      prompt←⍬ ⋄ output←'' ⋄ wins←NO_WIN ⋄ errors←NO_ERROR ⋄ numwins←0
-      :If ~IsPrompts waitprompts←,waitprompts ⋄ fn Error'Invalid awaited prompt types: ',⍕waitprompts
-      :ElseIf IsInteger waitwins ⋄ :AndIf waitwins≥0 ⋄ numwins←1  ⍝ target number of windows
-      :ElseIf 0∊⍴waitwins←,waitwins ⋄ :OrIf ∧/IsWin¨waitwins ⋄ numwins←0  ⍝ list of windows to touch
-      :Else ⋄ fn Error'Invalid awaited windows: ',⍕waitwins
-      :EndIf
-      :If numwins ⋄ nothing←waitwins=0 ⋄ :Else ⋄ nothing←0∊⍴wins ⋄ :EndIf
-      nothing∧←0∊⍴waitprompts
+    ∇ (output wins errors)←fn GatherResults(waitdone waitwin);done;messages
+    ⍝ Get session output, touched windows and thrown errors
+    ⍝ waitdone is boolean flag to wait for prompt to come back to 6-space
+    ⍝ waitwin is boolean flag to wait for windows to be touched
+      done←0 ⋄ output←'' ⋄ wins←NO_WIN ⋄ errors←NO_ERROR
       :Repeat
-          (prompt output wins errors),←fn ProcessMessages Read 1
-          :If nothing ⋄ done←(0∨.≠prompt)∨(~0∊⍴wins)
-          :Else
-              :If numwins ⋄ done←waitwins≤≢wins ⋄ :Else ⋄ done←∧/waitwins∊wins ⋄ :EndIf
-              done∧←∨/prompt∊waitprompts
-          :EndIf
+          (done output wins errors),←fn ProcessMessages messages←Read 1
+          done←(waitdone≤⊃⌽done)∧(waitwin≤~0∊⍴wins)
       :Until done
-      prompt←⊃⌽¯1,prompt~¯1  ⍝ only the last prompt set is interesting
       wins←∪wins  ⍝ window may get several messages e.g. UpdateWindow+SetHighlightLine
     ∇
 
-
-    ∇ (prompt output wins errors)←Wait wait
-    ⍝ Get last prompt type, session output, touched windows and thrown errors
-    ⍝ wait may be empty or specify (waitprompts waitwins)
-      :Access Public
-      (prompt output wins errors)←wait WaitSub'Wait'
-    ∇
-    ∇ result←Resume wait
-    ⍝ Resume execution of all threads
-      :Access Public
-      Send'["RestartThreads",{}]'
-      result←wait WaitSub'Resume'
-    ∇
-    ∇ result←{wait}Execute expr;wins
+    ∇ (output wins errors)←Execute expr;wins
     ⍝ Execute an APL expression.
       :Access Public
-      :If 0=⎕NC'wait' ⋄ wait←⊢ ⋄ :EndIf
       :If ~IsString expr←,expr ⋄ 'Execute'Error'Expression must be a string' ⋄ :EndIf
       EmptyQueue'Execute'
       Send'["Execute",{"text":',(1 ⎕JSON expr,LF),',"trace":0}]'  ⍝ DOC error : trace is 0|1 not true|false
-      result←wait WaitSub'Execute'
+      (output wins errors)←'Execute'GatherResults 1 0
     ∇
-    ∇ result←{wait}Trace expr;wins
+
+    ∇ (output wins errors)←Trace expr;wins
     ⍝ Trace into an APL expression.
+    ⍝ Caller must ensure that the timeout is larger than expression computation time.
       :Access Public
-      :If 0=⎕NC'wait' ⋄ wait←⊢ ⋄ :EndIf
       :If ~IsString expr←,expr ⋄ 'Trace'Error'Expression must be a string' ⋄ :EndIf
       EmptyQueue'Trace'
       Send'["Execute",{"text":',(1 ⎕JSON expr,LF),',"trace":1}]'  ⍝ DOC error : trace is 0|1 not true|false
-      result←wait WaitSub'Trace'
+      (output wins errors)←'Trace'GatherResults 1 1
     ∇
-    ∇ result←{wait}TraceRun win
+
+    ∇ (output wins errors)←TraceRun win
     ⍝ Run current line and move to next (step over)
       :Access Public
-      :If 0=⎕NC'wait' ⋄ wait←⊢ ⋄ :EndIf
       Send'["RunCurrentLine",{"win":',(1 ⎕JSON win.id),'}]'
-      result←wait WaitSub'TraceRun'
+      (output wins errors)←'TraceRun'GatherResults 1 0
       wins RemoveWindows←win  ⍝ only interested in spawning a new window
     ∇
-    ∇ result←{wait}TraceInto win
+    ∇ (output wins errors)←TraceInto win
     ⍝ Run current line and trace callees (step into)
       :Access Public
-      :If 0=⎕NC'wait' ⋄ wait←⊢ ⋄ :EndIf
       Send'["StepInto",{"win":',(1 ⎕JSON win.id),'}]'
-      result←wait WaitSub'TraceInto'
+      (output wins errors)←'TraceInto'GatherResults 1 0
       wins RemoveWindows←win  ⍝ only interested in spawning a new window
     ∇
-    ∇ result←{wait}TraceResume win
+    ∇ (output wins errors)←TraceResume win
     ⍝ Resume execution of current thread
       :Access Public
-      :If 0=⎕NC'wait' ⋄ wait←⊢ ⋄ :EndIf
       Send'["Continue",{"win":',(1 ⎕JSON win.id),'}]'
-      result←wait WaitSub'TraceResume'
+      (output wins errors)←'TraceResume'GatherResults 1 0
     ∇
-    ∇ result←{wait}TraceReturn win
+    ∇ (output wins errors)←TraceReturn win
     ⍝ Run current function until return to next line of caller
       :Access Public
-      :If 0=⎕NC'wait' ⋄ wait←⊢ ⋄ :EndIf
       Send'["ContinueTrace",{"win":',(1 ⎕JSON win.id),'}]'
-      result←wait WaitSub'TraceReturn'
+      (output wins errors)←'TraceReturn'GatherResults 1 0
+      wins RemoveWindows←win  ⍝ only interested in spawning a new window
+    ∇
+    ∇ (output wins errors)←Resume
+    ⍝ Resume execution of all threads
+      :Access Public
+      Send'["RestartThreads",{}]'
+      (output wins errors)←'Resume'GatherResults 1 0
     ∇
 
 
@@ -570,15 +539,16 @@
       list~←wins ⋄ :If 0∊⍴list ⋄ list←NO_WIN ⋄ :EndIf
       :If default ⋄ WINS←list ⋄ :EndIf
     ∇
-    ∇ CloseWindow win;errors;message;messages;ok;output;prompt;wins
+    ∇ CloseWindow win;errors;message;messages;ok;output;wins
     ⍝ Close an edit or tracer window
       :Access Public
+      ⍝ ["CloseWindow",{"win":123}] // RIDE -> Interpreter  and  Interpreter -> RIDE
       :If ~IsWin win ⋄ 'CloseWindow'Error'Argument must be a window' ⋄ :EndIf
       :Select win.type
       :CaseList 'Editor' 'Tracer'
           Send message←'["CloseWindow",{"win":',(1 ⎕JSON win.id),'}]'
-          (prompt output wins errors)←⍬ win WaitSub'CloseWindow'
-          ok←(prompt≡¯1)∧(output≡'')∧(errors≡NO_ERROR)∧(wins≡,⊂win)
+          (output wins errors)←'CloseWindow'GatherResults 0 1
+          ok←(output≡'')∧(errors≡NO_ERROR)∧(wins≡,⊂win)
           :If ok∧(~IsWin win) ⍝ actually closed the window
           :ElseIf ok∧(IsWin win) ⋄ :AndIf 'Tracer'≡win.type  ⍝ edit turned back into a tracer
           :Else ⋄ 'CloseWindow'Error'Failed to close window ',⍕win.id
@@ -595,7 +565,7 @@
       :Access Public
       :If ~0∊⍴WINS ⋄ CloseWindow¨WINS ⋄ :EndIf
     ∇
-    ∇ CloseAllWindows;errors;messages;output;prompt;toclose;wins
+    ∇ CloseAllWindows;errors;messages;output;toclose;wins
     ⍝ Close all edit/tracer windows with special RIDE protocol message
       :Access Public
       Send'["CloseAllWindows",{}]'
@@ -604,14 +574,9 @@
       :EndIf
       :If 0∊⍴toclose ⋄ EmptyQueue'CloseAllWindows' ⋄ :EndIf  ⍝ ensure no response
       :While ~0∊⍴toclose
-          (prompt output wins errors)←⍬ 1 WaitSub'CloseAllWindows'
-          :If prompt≢¯1 ⋄ 'CloseAllWindows'Error'Produced unexpected prompt: ',⍕prompt
-          :ElseIf ~0∊⍴errors ⋄ 'CloseAllWindows'Error'Produced unexpected errors: ',⍕errors
-          :ElseIf ~0∊⍴output ⋄ 'CloseAllWindows'Error'Produced unexpected output: ',⍕output
-          :ElseIf 1≠≢wins ⋄ :OrIf ~IsWin⊃wins ⋄ 'CloseAllWindows'Error'Did not produce 1 window'
-          :EndIf
-          :If (prompt≢¯1)∨(output≢'')∨(errors≢NO_ERROR)∨(~∧/wins∊toclose)
-              'CloseAllWindows'Error'Unexpected output'
+          (output wins errors)←'CloseAllWindows'GatherResults 0 1
+          :If (output≢'')∨(errors≢NO_ERROR)∨(~∧/wins∊toclose)
+              'CloseAllWindows'Error'Touched other windows: ',(⍕(wins~toclose).id)
           :EndIf
           toclose~←wins
       :EndWhile
@@ -621,29 +586,26 @@
 
 
 
-    ∇ win←{type}ED name;errors;expr;output;prompt;types;wins
-    ⍝ Cover for ⎕ED to open one editor window, allowing to specify its type if name is undefined
+    ∇ wins←{types}ED names;errors;expr;output;wins
+    ⍝ Cover for ⎕ED to open one or more editor window
+    ⍝ Remember that ⎕ED silently fails on invalid names
+    ⍝ so (≢wins) may be less than (≢names)
       :Access Public
-      :If 0=⎕NC'type' ⋄ type←''
-      :ElseIf ~IsString name ⋄ 'ED'Error'Right argument must be a string'
-      :ElseIf ¯1=⎕NC name ⋄ 'ED'Error'Invalid name: ',name   ⍝ ⎕ED silently fails but we don't
-      :ElseIf ~type∊types←'∇→∊-⍟○∘' ⋄ 'ED'Error'Left argument must be a character amongst ',types
-      :Else ⋄ type←Stringify type
+      :If 0=⎕NC'types' ⋄ types←''
+      :ElseIf ~IsSource names←,⊆,names ⋄ 'ED'Error'Right argument must be a string or list of strings'
+      :ElseIf ~IsString types←,types ⋄ 'ED'Error'Left argument must be a string'
+      :Else ⋄ types←⍕Stringify¨types
       :EndIf
-      expr←type,'⎕ED',⍕Stringify¨names
+      expr←types,'⎕ED',⍕Stringify¨names
       EmptyQueue'ED'
       Send'["Execute",{"text":',(1 ⎕JSON expr,LF),',"trace":false}]'
-      (prompt output wins errors)←⍬ 1 WaitSub'ED'
-      :If prompt≢¯1 ⋄ 'ED'Error'Produced unexpected prompt: ',⍕prompt
-      :ElseIf ~0∊⍴errors ⋄ 'ED'Error'Produced unexpected errors: ',⍕errors
+      (output wins errors)←'ED'GatherResults 1 1
+      :If ~0∊⍴errors ⋄ 'ED'Error'Produced unexpected error: ',⍕errors
       :ElseIf ~0∊⍴output ⋄ 'ED'Error'Produced unexpected output: ',⍕output
-      :ElseIf 1≠≢wins ⋄ 'ED'Error'Did not produce 1 window'
-      :ElseIf wins.type≢,⊂'Editor' ⋄ 'ED'Error'Did not produce an edit window'
-      :ElseIf wins.title≢,⊂name ⋄ 'ED'Error'Did not edit expected name'
-      :EndIf ⋄ win←⊃wins
+      :EndIf
     ∇
 
-    ∇ win←EditOpen name;errors;ok;output;prompt;wins
+    ∇ win←EditOpen name;errors;ok;output;wins
     ⍝ Edit a name, get a window.
     ⍝ To specify the type of entity to edit, use ED instead.
       :Access Public
@@ -654,14 +616,13 @@
       win←NO_WIN  ⍝ failed to open anything
       EmptyQueue'EditOpen'
       Send'["Edit",{"win":0,"text":',(1 ⎕JSON name),',"pos":1,"unsaved":{}}]'  ⍝ ⎕BUG doesn't work if unsaved not specified ? ⎕DOC : win must be 0 to create a new window
-      (prompt output wins errors)←⍬ 1 WaitSub'EditOpen'
-      :If prompt≢¯1 ⋄ 'EditOpen'Error'Produced unexpected prompt: ',⍕prompt
-      :ElseIf NO_ERROR≢errors ⋄ 'EditOpen'Error'Produced unexpected error: ',⍕errors
+      (output wins errors)←'EditOpen'GatherResults 0 1
+      :If NO_ERROR≢errors ⋄ 'EditOpen'Error'Produced unexpected error: ',⍕errors
       :ElseIf 0≠≢output ⋄ 'EditOpen'Error'Produced unexpected output: ',⍕output
       :ElseIf 1≠≢wins ⋄ 'EditOpen'Error'Failed to open 1 window'
-      :ElseIf wins.type≢,⊂'Editor' ⋄ 'EditOpen'Error'Did not produce an edit window'
       :ElseIf wins.title≢,⊂name ⋄ 'EditOpen'Error'Did not edit expected name'
-      :EndIf ⋄ win←⊃wins
+      :Else ⋄ win←⊃wins
+      :EndIf
     ∇
 
     ∇ {ok}←win EditFix src;arguments;command;errors;messages;output;stops;wins
