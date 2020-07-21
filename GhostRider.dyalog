@@ -7,6 +7,7 @@
 ⍝ it will block the APL thread until it gets it.
 ⍝ Dyalog v18.0 or later required.
 
+
 ⍝ To create a new APL process and connect to it
 ⍝    R←⎕NEW GhostRider {env}
 ⍝ - optional {env} is a string giving a list of environment variables to set up for the interpreter
@@ -19,8 +20,7 @@
 ⍝ - optional {host} is a string giving the ip address to connect to
 ⍝   {host} defaults to '127.0.0.1' which is the local machine
 
-⍝ Public API :
-⍝
+
 ⍝ RIDE commands usually wait for a response,
 ⍝ which may be changing the prompt type, or touching a window (edit, tracer, dialog, etc.).
 ⍝ This is specified by a 2-element vector :
@@ -66,34 +66,39 @@
 ⍝ - EN: error number (scalar integer)
 ⍝ - EM: error message (string)
 ⍝ - Message: detailed message (string)
+
+
+⍝ Public API:
 ⍝
-⍝ <result> ← {<wait>} Execute expr  ⍝ Execute an APL expression
-⍝
-⍝ wins←Windows                  ⍝ List all open windows
-⍝ CloseWindow win               ⍝ Close a window
-⍝ CloseWindows                  ⍝ Close all windows (inluding message and dialog boxes)
-⍝ CloseAllWindows               ⍝ Close all edit/tracer windows with special RIDE protocol message
-⍝ {response} Reply win          ⍝ Reply to a dialog box
-⍝
-⍝ win←EditOpen name             ⍝ Start editing a name (may create a new window or jump to an existing one)
-⍝ ok←win EditFix src {stops}    ⍝ Fix new source (and stops) in given window
-⍝ name Edit src {stops}         ⍝ EditOpen + EditFix + CloseWindow
-⍝ win←{types}ED names           ⍝ Cover for ⎕ED that returns the created windows
-⍝ src←Reformat src              ⍝ Reformat code
-⍝
-⍝ Trace expr                    ⍝ Start tracing an expression
-⍝ TraceRun win                  ⍝ Run current line and move to next line (step over)
-⍝ TraceInto win                 ⍝ Run current line and trace into callees (step into)
-⍝ TraceResume win               ⍝ Resume execution of current thread
-⍝ TraceReturn win               ⍝ Run current function until return to next line of caller
-⍝ Resume                        ⍝ Resume all threads
+⍝ The following functions execute code: they take a 2-element <wait> argument and return a 4-element <result>
+⍝ <result> ← {<wait>} Execute expr      ⍝ Execute an APL expression
+⍝ <result> ← {<wait>} Trace expr        ⍝ Start tracing an expression
+⍝ <result> ← {<wait>} TraceRun win      ⍝ Run current line and move to next line (step over)
+⍝ <result> ← {<wait>} TraceInto win     ⍝ Run current line and trace into callees (step into)
+⍝ <result> ← {<wait>} TraceResume win   ⍝ Resume execution of current thread
+⍝ <result> ← {<wait>} TraceReturn win   ⍝ Run current function until return to next line of caller
+⍝ <result> ← Resume <wait>              ⍝ Resume all threads
+⍝ <result> ← Wait <wait>                ⍝ Just wait for something to happen, without sending any message
 ⍝
 ⍝ The following functions change the state of the tracer without executing code (and don't return anything)
-⍝ TraceCutback win              ⍝ Cut back to caller
-⍝ TraceNext win                 ⍝ Jump to next line
-⍝ TracePrev win                 ⍝ Jump to previous line
-⍝ win TraceJump line            ⍝ Jump to specified line
-⍝ win SetStops stops            ⍝ Change stop points (edit or trace window)
+⍝ TraceCutback win                      ⍝ Cut back to caller
+⍝ TraceNext win                         ⍝ Jump to next line
+⍝ TracePrev win                         ⍝ Jump to previous line
+⍝ win TraceJump line                    ⍝ Jump to specified line
+⍝
+⍝ src←Reformat src                      ⍝ Reformat code
+⍝ win←EditOpen name                     ⍝ Start editing a name (may create a new window or jump to an existing one)
+⍝ res←win EditFix src {stops}           ⍝ Fix new source (and optional stops) in given window - may succeed, fail, or pop-up a dialog window
+⍝ win←{types}ED names                   ⍝ Cover for ⎕ED that returns the created windows
+⍝ win SetStops stops                    ⍝ Change stop points (edit or trace window)
+⍝ (traces stops monitors) ← ClearTraceStopMonitor   ⍝ Clear all races, stops, and monitors in the active workspace. The reply says how many of each thing were cleared.
+⍝
+⍝ wins←Windows                          ⍝ List all open windows
+⍝ CloseWindow win                       ⍝ Close a window
+⍝ CloseWindows                          ⍝ Close all windows (including message and dialog boxes)
+⍝ CloseAllWindows                       ⍝ Close all edit/tracer windows with special RIDE protocol message
+⍝ <result> ← {response} Reply win       ⍝ Reply to a dialog window, resuming execution
+
 
 ⍝ Notes:
 ⍝ - Edit/trace windows are represented as namespaces with fields for window attributes
@@ -124,9 +129,9 @@
 
     ⎕IO←⎕ML←1
 
-    :Field Public DEBUG←1               ⍝ set to 1 to log debug information
-    :Field Public TRACE←1               ⍝ set to 1 to fully trace the RIDE protocol
-    :Field Public TIMEOUT←200          ⍝ timeout in milliseconds for responses that don't require significant computation - 200 is required on windows VM
+    :Field Public DEBUG←0               ⍝ set to 1 to log debug information
+    :Field Public TRACE←0               ⍝ set to 1 to fully trace the RIDE protocol
+    :Field Public TIMEOUT←200           ⍝ timeout in milliseconds for responses that don't require significant computation - 200 is required on windows VM
 
     :Field Private Shared ReadOnly LF←⎕UCS 10
     :Field Private Shared ReadOnly CR←⎕UCS 13
@@ -209,6 +214,7 @@
     ∇ Constructor args;RIDE_INIT;_;env;host;port;r;runtime;tm1;tm2
       :Access Public
       :Implements Constructor
+      ⎕RL←⍬ 1  ⍝ for ED and _RunQA
       LoadLibraries
       :If (0∊⍴args)∨(''≡0⍴args)  ⍝ spawn a local Ride - args is {env}
           host←'127.0.0.1' ⋄ port←GetTcpPort
@@ -217,9 +223,9 @@
           :If 0∊⍴('\sDYAPP='⎕S 0)env  ⍝ don't inherit some environment variables
               env,←' DYAPP='
           :EndIf
-          :If 0∊⍴('\sSESSION_FILE='⎕S 0)env  ⍝ don't inherit some environment variables
-              env,←' SESSION_FILE='
-          :EndIf
+          ⍝:If 0∊⍴('\sSESSION_FILE='⎕S 0)env  ⍝ don't inherit some environment variables
+          ⍝    env,←' SESSION_FILE='
+          ⍝:EndIf
           PROCESS←⎕NEW APLProcess(''env runtime RIDE_INIT)
           ⎕DL 0.3  ⍝ ensure process doesn't exit early
           :If PROCESS.HasExited
@@ -426,12 +432,13 @@
               win.(title type text)←'' 'Html'(,⊂arguments.html)
           :Case 'OptionsDialog'
               win←1 GetWindow arguments.token
-              win.(title text options index)←arguments.(title text options(¯1+⍳≢options))
+              win.(title type text options index)←arguments.(title'Options'text options(¯1+⍳≢options))
           :Case 'TaskDialog'
               win←1 GetWindow arguments.token
-              win.(title text options index)←arguments.(title text(options,buttonText)((¯1+⍳≢options),(99+⍳≢buttonText)))
+              win.(title type text options index)←arguments.(title'Task'text(options,buttonText)((¯1+⍳≢options),(99+⍳≢buttonText)))
           :Case 'StringDialog'
               win←1 GetWindow arguments.token
+              win.(title type text value default)←arguments.(title'String'text initialValue defaultValue)
           :Case 'SysError'
               LogInfo'SysError: ',⍕arguments.(text stack)
               Terminate
@@ -539,14 +546,15 @@
 
 
 
-    ∇ {response}Reply win
+    ∇ result←{response}Reply win;result
     ⍝ response must be one of win.options or win.index for Options and Task dialogs
     ⍝ response must be a string for String dialogs
-    ⍝ no response means close the window
+    ⍝ No response means close the window
+    ⍝ Because replying to a dialog window will resume execution, the result is a full execution result
       :Access Public
       :Select win.type
       :CaseList 'Options' 'Task'
-          :If 0=⎕NC'reponse' ⋄ response←¯1  ⍝ just close the window
+          :If 0=⎕NC'response' ⋄ response←¯1  ⍝ just close the window
           :ElseIf (⊂response)∊win.options ⋄ response←(win.options⍳⊂response)⊃win.index
           :ElseIf (⊂response)∊win.index ⍝ response is ok
           :Else ⋄ 'Reply'Error'Invalid response for a ',win.type,' dialog'
@@ -556,7 +564,9 @@
           :If 0=⎕NC'reponse' ⋄ response←win.value ⋄ :EndIf  ⍝ edit field untouched
           Send'["Reply',win.type,'Dialog",{"value":',(1 ⎕JSON response),',"token":',(1 ⎕JSON win.id),'}]'
       :EndSelect
+      result←WaitSub'Reply'  ⍝ wait for prompt type to come back
       RemoveWindows win
+      ⍝ (3⊃result),←win ⍝ Could arguably append win to the list of windows in the result ? But it would be inconditional (not supported by RIDE protocol)
     ∇
 
     ∇ {list}←{list}RemoveWindows wins;default
@@ -600,7 +610,7 @@
       :If 0∊⍴toclose ⋄ EmptyQueue'CloseAllWindows' ⋄ :EndIf  ⍝ ensure no response
       :While ~0∊⍴toclose
           (prompt output wins errors)←⍬ 1 WaitSub'CloseAllWindows'
-          :If prompt≢¯1 ⋄ 'CloseAllWindows'Error'Produced unexpected prompt: ',⍕prompt
+          :If ~prompt∊¯1 1 ⋄ 'CloseAllWindows'Error'Produced unexpected prompt: ',⍕prompt
           :ElseIf errors≢NO_ERROR ⋄ 'CloseAllWindows'Error'Produced unexpected errors: ',⍕errors
           :ElseIf output≢'' ⋄ 'CloseAllWindows'Error'Produced unexpected output: ',⍕output
           :ElseIf {1∨.≠(+/⍵),(+⌿⍵)}toclose∘.≡wins ⋄ 'CloseAllWindows'Error'Did not produce close all windows'
@@ -651,13 +661,17 @@
       :ElseIf NO_ERROR≢errors ⋄ 'EditOpen'Error'Produced unexpected error: ',⍕errors
       :ElseIf ''≢output ⋄ 'EditOpen'Error'Produced unexpected output: ',⍕output
       :ElseIf 1≠≢wins ⋄ 'EditOpen'Error'Failed to open 1 window'
-      :ElseIf wins.type≢,⊂'Editor' ⋄ 'EditOpen'Error'Did not produce an edit window'
-      :ElseIf wins.title≢,⊂name ⋄ 'EditOpen'Error'Did not edit expected name'
-      :EndIf ⋄ win←⊃wins
+      :ElseIf wins.type≡,⊂'Editor'
+          :If wins.title≢,⊂name ⋄ 'EditOpen'Error'Did not edit expected name' ⋄ :EndIf
+      :ElseIf ~(⊂wins.type)∊'Options' 'Task' ⋄ 'EditOpen'Error'Opened something else than an Options/Task window: ',(⊃wins).type
+      :EndIf
+      win←⊃wins
     ∇
 
-    ∇ {ok}←win EditFix src;arguments;command;errors;messages;output;prompt;stops;wins
+    ∇ res←win EditFix src;arguments;command;errors;messages;output;prompt;stops;wins
     ⍝ Fix source in a given edit window
+    ⍝ result is boolean if fixing was completed (0 for OK, 1 for error)
+    ⍝ otherwise it's an OptionsDialog popped up by the editor
       :Access Public
       :If 3=|≡src←,⊆,src  ⍝ right argument may be (src stops)
           (src stops)←src
@@ -671,22 +685,15 @@
       EmptyQueue'EditFix'
       Send'["SaveChanges",{"win":',(1 ⎕JSON win.id),',"text":',(1 ⎕JSON src),',"stop":',(1 ⎕JSON stops),'}]'
       (prompt output wins errors)←⍬ 1 WaitSub'EditFix'
-      :If prompt≢¯1 ⋄ 'EditFix'Error'Produced unexpected prompt: ',⍕prompt  ⍝ ⎕BUG ? On linux, even though promptype was already 1, SaveChanges triggers two SetPromptType(1) messages before the ReplySaveChanges
+      :If ~prompt∊¯1 1 ⋄ 'EditFix'Error'Produced unexpected prompt: ',⍕prompt  ⍝ ⎕BUG ? Even though promptype was already 1, SaveChanges may trigger two SetPromptType(1) messages before the ReplySaveChanges, and may trigger one before an OptionsDialog
       :ElseIf NO_ERROR≢errors ⋄ 'EditFix'Error'Produced unexpected error: ',⍕errors
       :ElseIf ''≢output ⋄ 'EditFix'Error'Produced unexpected output: ',⍕output
-      :ElseIf wins≢,⊂win ⋄ 'EditFix'Error'Failed to fix window: ',⍕win.id
-      :Else ⋄ win←⊃wins
+      :ElseIf 1≠≢wins ⋄ 'EditFix'Error'Failed to open 1 window'
+      :ElseIf wins≡,⊂win ⋄ res←0≡win.saved  ⍝ fixed
+      :ElseIf ~(⊂(⊃wins).type)∊'Options' 'Task' ⋄ 'EditFix'Error'Opened something else than an Options/Task window: ',(⊃wins).type
+      :Else ⋄ res←⊃wins  ⍝ a wild dialog window appears
       :EndIf
-      ok←0≡win.saved
       win.(text stop)←src stops
-    ∇
-
-    ∇ {ok}←name Edit src;win
-    ⍝ Modify a name through the editor
-      :Access Public
-      win←EditOpen name
-      ok←win EditFix src
-      CloseWindow win
     ∇
 
     ∇ src←Reformat src;arguments;command;errors;messages;ns;ok;output;prompt;script;trad;type;win;wins
@@ -762,11 +769,23 @@
       :Access Public
       :If ~IsStops stops←,stops ⋄ 'SetStops'Error'Right argument must be numeric vector: ',⍕stops ⋄ :EndIf
       :If ~IsWin win ⋄ 'SetStops'Error'Left argument must be a window' ⋄ :EndIf
+      EmptyQueue'SetStops'
       Send'["SetLineAttributes",{"win":',(1 ⎕JSON win.id),',"stop":',(1 ⎕JSON stops),'}]'
       :If ¯1 ''NO_WIN NO_ERROR≢⍬ 0 WaitSub'SetStops'  ⍝ do not expect significant processing
           'SetStops'Error'Failed'
       :EndIf
       win.stop←stops
+    ∇
+    ∇ (traces stops monitors)←ClearTraceStopMonitor;messages
+    ⍝ Clear all traces/stops/monitors in active workspace
+      :Access Public
+      EmptyQueue'ClearTraceStopMonitor'
+      Send'["ClearTraceStopMonitor",{"token":0}]'
+      messages←Read 1
+      :If 1≠≢messages ⋄ :OrIf 'ReplyClearTraceStopMonitor'≢⊃⊃messages
+          'ClearTraceStopMonitor'Error'Unexpected replies:',⍕⊃¨messages
+      :EndIf
+      (traces stops monitors)←(2⊃⊃messages).(traces stops monitors)
     ∇
 
 
@@ -775,23 +794,29 @@
 
 
 
-
-    ∇ ok←_RunQA stop;BUG;_Reformat;dup;dup2;dupstops;dupwin;error;foo;foowin;goo;goowin;html;ok;output;src;src1;src2;tmp;win;win2;∆
+    ∇ ok←_RunQA stop;BUG;_Reformat;dup;dup2;dupstops;dupwin;error;foo;foowin;goo;goowin;html;ok;ondisk;ondisk2;output;r;src;src1;src2;tmpdir;tmpfile;win;win2;∆
       :Access Public
       ∆←stop{⍺←'' ⋄ ⍵≡1:⍵ ⋄ ⍺⍺:0⊣'QA'Error ⍺ ⋄ 0⊣'QA'LogWarn ⍺}
       ok←1
      
       ok∧←'Execute )CLEAR'∆ 1('clear ws',NL)(NO_WIN)(NO_ERROR)≡Execute')CLEAR'
+      ok∧←'Execute ]rows on'∆(r[2]∊'Was ON' 'Was OFF',¨NL)∧(1(NO_WIN)(NO_ERROR)≡(⊂1 3 4)⌷r←Execute']rows on')
+     
+      ⍝ Execution : APL, session, error
       ok∧←'Execute meaning of life'∆ 1('42',NL)(NO_WIN)(NO_ERROR)≡Execute'⍎⊖⍕⊃⊂|⌊-*+○⌈×÷!⌽⍉⌹~⍴⍋⍒,⍟?⍳0'
       output←∊'DOMAIN ERROR: Divide by zero' '      ÷0' '      ∧',¨NL
       error←11 'DOMAIN ERROR' 'Divide by zero'
       ok∧←'Execute ÷0'∆ 1(output)(NO_WIN)(,⊂error)≡Execute'÷0'
+     
+      ⍝ Reformat
      
       src←'    res  ←   format   arg   ' ':if arg' '⎕←      ''yes''' ':endif'
       ok∧←'Reformat function'∆({(⎕NS ⍬).(⎕NR ⎕FX ⍵)}src)≡(Reformat src)
       src1←'    :Namespace   ' '∇   tradfn   ' '⎕ ← 1 2 3   ' '∇' 'VAR  ←   4 5  6  ' 'dfn  ←   {  ⍺ +  ⍵   }   ' '      :EndNamespace    '
       src2←':Namespace' '    ∇ tradfn' '      ⎕←1 2 3' '    ∇' '    VAR  ←   4 5  6' '    dfn  ←   {  ⍺ +  ⍵   }' ':EndNamespace'
       ok∧←'Reformat namespace'∆ src2≡Reformat src1
+     
+      ⍝ Edit/Fix
      
       dup←' res←dup arg' ' ⎕←''this is dup''' ' res←arg arg'
       foo←' res←foo arg' ' ⎕←''this is foo''' ' res←dup arg'
@@ -811,13 +836,15 @@
       ok∧←'EditOpen on fixed name'∆ win≢foowin←EditOpen'foo'  ⍝ mantis 18291 - opens a new window rather than go to window where foo was fixed
       CloseAllWindows  ⍝ close two windows - would error on failure
       CloseAllWindows  ⍝ close zero window - would error on failure
+      ok∧←'Execute ⎕FX goo'∆ 1('goo',NL)(NO_WIN)(NO_ERROR)≡Execute'+⎕FX ',⍕Stringify¨goo   ⍝ goo → foo → dup
+     
+      ⍝ Tracer
      
       ok∧←'Trace foo'∆ 1('')(WINS)(NO_ERROR)≡Trace'foo ''argument'' '
       win←⊃WINS
       ok∧←'TraceResume foo'∆ 1('this is foo',NL,'this is dup',NL,' argument  argument ',NL)(,⊂win)(NO_ERROR)≡TraceResume win ⍝ will close window
       ok∧←'TraceResume effect'∆ WINS≡NO_WIN
      
-      ok∧←'Execute ⎕FX goo'∆ 1('goo',NL)(NO_WIN)(NO_ERROR)≡Execute'+⎕FX ',⍕Stringify¨goo   ⍝ goo → foo → dup
       ok∧←'Execute ⎕STOP goo'∆ 1('1',NL)(NO_WIN)(NO_ERROR)≡Execute'+1 ⎕STOP ''goo'''       ⍝ set breakpoint
       ok∧←'Execute goo'∆ 1(NL,'goo[1]',NL)(WINS)(ERROR_BREAK)≡Execute'goo ''hello'''  ⍝ pop up tracer on breakpoint
       win←⊃WINS
@@ -887,17 +914,56 @@
       ok∧←'Resume'∆ 1(' hello  hello ',NL)(,win)(NO_ERROR)≡tmp
       ok∧←'Closed all windows'∆ WINS≡NO_WIN
      
+      ⍝ Trace/Stop/Monitors
+     
+      ok∧←'⎕TRACE'∆ 1(' 0 2  1 2 ',NL)(NO_WIN)(NO_ERROR)≡Execute'+(0 2) (1 2) ⎕TRACE¨ ''foo'' ''goo'''
+      ok∧←'⎕MONITOR'∆ 1(' 0 2  1 ',NL)(NO_WIN)(NO_ERROR)≡Execute'+(0 2) 1 ⎕MONITOR¨ ''foo'' ''goo'''
+      ok∧←'ClearTraceStopMonitor'∆ 4 5 3≡ClearTraceStopMonitor
+     
+      ⍝ Dialog boxes
+     
       html←'<!DOCTYPE html> <html> <body> hello </body> </html>'
       ok∧←'3500⌶'∆ 1('0',NL)(WINS)(NO_ERROR)≡Execute'3500⌶''',html,''''
       ok∧←'3500⌶ contents'∆(⊃WINS).text≡,⊂html
       CloseWindow⊃WINS
       ok∧←'Closed 3500⌶ window'∆ WINS≡NO_WIN
      
-      ⍝ TODO: '3503⌶'∆ Execute'3503⌶''Caption'' (''Text 1'' ''Text 2'') ''Error'' (''Button 1'' ''Button 2'' ''Button 3'')'
+      ⍝styles←'Msg' 'Info' 'Query' 'Warn'  'Error'
+      ⍝buttons←(,⊂'OK')('OK' 'CANCEL')('RETRY' 'CANCEL')('YES' 'NO')('YES' 'NO' 'CANCEL')('ABORT' 'RETRY' 'IGNORE')  ⍝ valid buttons
+      ok∧←'3503⌶'∆ 0 ''(WINS)(NO_ERROR)≡Execute'3503⌶''Caption'' (''Text 1'' ''Text 2'') ''Info'' (''abort'' ''RETRY'' ''IgNoRe'')'
+      ok∧←'3503⌶ window'∆'Caption'('Text 1',CR LF,'Text 2')'Options'('Abort' 'Retry' 'Ignore')(0 1 2)≡(⊃WINS).(title text type options index)  ⍝ ⎕BUG newline is CR+LF !!!
+      ok∧←'Monadic Reply'∆ 1('62',NL)NO_WIN NO_ERROR≡Reply⊃WINS  ⍝ ⎕BUG : closing abort/retry/ignore selects retry
+      ok∧←'Monadic Reply effect'∆ WINS≡NO_WIN
+      ok∧←'3503⌶'∆ 0 ''(WINS)(NO_ERROR)≡Execute'3503⌶''Caption'' (''Text 1'' ''Text 2'') ''Error'' (''Yes'' ''No'' ''Cancel'')'
+      ok∧←'3503⌶ window'∆'Caption'('Text 1',CR LF,'Text 2')'Options'('Yes' 'No' 'Cancel')(0 1 2)≡(⊃WINS).(title text type options index)  ⍝ ⎕BUG newline is CR+LF !!!
+      ok∧←'Dyadic Reply'∆ 1('61',NL)NO_WIN NO_ERROR≡'Yes'Reply⊃WINS
+      ok∧←'Dyadic Reply effect'∆ WINS≡NO_WIN
      
+      ok∧←'739⌶0'∆ 1 NO_WIN NO_ERROR≡(⊂1 3 4)⌷r←Execute'739⌶0' ⍝ get temporary directory
+      ok∧←'739⌶0 results'∆(NL=2⊃r)≡(1↑⍨-≢2⊃r)
+      tmpfile←(tmpdir←¯1↓2⊃r),'/',⎕A[?50⍴26],'.tmp'
+      ondisk←' res←OnDisk arg' '⍝ this function is fixed on disk' ' res←arg arg'
+      ondisk2←ondisk,'' '⍝ one last comment'
      
+      ok∧←'Creating temp file'∆ 1('1',NL)NO_WIN NO_ERROR≡Execute'× (⊂',(⍕Stringify¨ondisk),') ⎕NPUT ''',tmpfile,''' 0'
+      ok∧←'Fixing temp file'∆ 1(' OnDisk ',NL)NO_WIN NO_ERROR≡Execute'⎕←2 ⎕FIX ''file://',tmpfile,''''
+      ok∧←'EditOpen temp file'∆ WINS≡,⊂win←EditOpen'OnDisk'
+      ok∧←'Deleting temp file'∆ 1('1',NL)NO_WIN NO_ERROR≡Execute'⎕←⎕NDELETE ''',tmpfile,''''
+      ok∧←'EditFix temp file'∆(⊃⌽WINS)≡win2←win EditFix ondisk2  ⍝ will pop up a window to complain that file has disappeared
+      ok∧←'EditFix temp file effect'∆ WINS≡win win2
+      ok∧←'EditFix Reply fix&write'∆ 1 ''(,win)NO_ERROR≡100 Reply win2   ⍝ fix and write back to file
+      ok∧←'EditFix Reply fix&write effect'∆(0≡win.saved)∧(WINS≡,⊂win)
+      ok∧←'EditFix fix effect'∆ 1(,(↑ondisk2),NL)(NO_WIN)(NO_ERROR)≡Execute' ⎕CR ''OnDisk'' '  ⍝ function has changed
+      ok∧←'EditFix write effect'∆ 1(,(↑ondisk2),NL)(NO_WIN)(NO_ERROR)≡Execute' ↑⊃ ⎕NGET ''',tmpfile,''' 1'  ⍝ file on disk has changed
      
-      ∘∘∘
+      ok∧←'Deleting temp file'∆ 1('1',NL)NO_WIN NO_ERROR≡Execute'⎕←⎕NDELETE ''',tmpfile,''''
+      ok∧←'EditFix temp file'∆(⊃⌽WINS)≡win2←win EditFix ondisk  ⍝ will pop up a window to complain that file has disappeared
+      ok∧←'EditFix Reply'∆ ¯1 ''(,win)NO_ERROR≡103 Reply win2   ⍝ discard changes
+      CloseWindow win
+      ok∧←'CloseWindow'∆ WINS≡NO_WIN
+      ok∧←'EditFix effect'∆ 1(,(↑ondisk2),NL)(NO_WIN)(NO_ERROR)≡Execute' ⎕CR ''OnDisk'' '  ⍝ function hasn't changed
+      ok∧←'EditFix effect'∆ 1('0',NL)(NO_WIN)(NO_ERROR)≡Execute' ⎕NEXISTS ''',tmpfile,''' '  ⍝ file is still deleted
+      ok∧←'2 ⎕FIX ⎕NR OnDisk'∆ 1(' OnDisk ',NL)(NO_WIN)(NO_ERROR)≡Execute' +2 ⎕FIX ',⍕Stringify¨ondisk  ⍝ untie from file and put back original definition
     ∇
 
 
