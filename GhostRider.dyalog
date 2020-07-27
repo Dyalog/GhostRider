@@ -28,7 +28,7 @@
 ⍝ - waitprompts is a list of prompt types to wait for
 ⍝ - waitwins is either a number of windows to wait for, or a list of windows to wait for.
 ⍝ Both conditions are awaited for (the conjunction is AND and not OR)
-⍝ If nothing is waited for, then we wait for the first touched window OR non-zero prompt
+⍝ If nothing is waited for, then we wait for the first touched window OR non-zero prompt.
 ⍝
 ⍝ RIDE commands return a 4-element result :
 ⍝ <result> ←→ (prompt output wins errors)
@@ -84,7 +84,6 @@
 ⍝ TraceCutback win                      ⍝ Cut back to caller
 ⍝ TraceNext win                         ⍝ Jump to next line
 ⍝ TracePrev win                         ⍝ Jump to previous line
-⍝ win TraceJump line                    ⍝ Jump to specified line
 ⍝
 ⍝ src←Reformat src                      ⍝ Reformat code
 ⍝ win←EditOpen name                     ⍝ Start editing a name (may create a new window or jump to an existing one)
@@ -97,8 +96,7 @@
 ⍝ CloseWindow win                       ⍝ Close a window
 ⍝ CloseWindows                          ⍝ Close all windows (including message and dialog boxes)
 ⍝ CloseAllWindows                       ⍝ Close all edit/tracer windows with special RIDE protocol message
-⍝ <result> ← {response} Reply win       ⍝ Reply to a dialog window, resuming execution
-
+⍝ {response} Reply win                  ⍝ Reply to a dialog window - may resume execution in which case a Wait might be necessary
 
 ⍝ Notes:
 ⍝ - Edit/trace windows are represented as namespaces with fields for window attributes
@@ -112,7 +110,9 @@
 
 
 
-    :Field Public Shared ReadOnly Version←'1.3.0'
+    :Field Public Shared ReadOnly Version←'1.3.1'
+    ⍝ v1.3.1 - Nic 2020
+    ⍝   - avoid waiting the whole TIMEOUT for messages, which is slow AND unreliable
     ⍝ v1.3.0 - Nic 2020
     ⍝   - API to control dialog boxes
     ⍝ v1.2.0 - Nic 2020
@@ -129,9 +129,12 @@
 
     ⎕IO←⎕ML←1
 
-    :Field Public DEBUG←0               ⍝ set to 1 to log debug information
-    :Field Public TRACE←0               ⍝ set to 1 to fully trace the RIDE protocol
-    :Field Public TIMEOUT←200           ⍝ timeout in milliseconds for responses that don't require significant computation - 200 is required on windows VM
+    :Field Public INFO←1                    ⍝ set to 1 to log debug information
+    :Field Public TRACE←1                   ⍝ set to 1 to fully trace the RIDE protocol
+    :Field Public DEBUG←1                   ⍝ set to 1 to maximise the likelihood of finding a bug
+
+    :Field Public TIMEOUT←200               ⍝ maximum Conga timeout in milliseconds for responses that don't require significant computation
+    :Field Public BUFSIZE←2*15 4            ⍝ Conga buffer size for DEBUG=0 and DEBUG=1 - use small value for harsh QA that may miss messages
 
     :Field Private Shared ReadOnly LF←⎕UCS 10
     :Field Private Shared ReadOnly CR←⎕UCS 13
@@ -146,8 +149,8 @@
     :Field Private Shared DRC←⎕NULL              ⍝ Conga namespace - loaded from conga workspace
     :Field Private Shared APLProcess←⎕NULL       ⍝ APLProcess namespace - loaded from APLProcess.dyalog
 
-    :Field Public Shared ReadOnly ERROR_OK←0 '' ''  ⍝ error←(EN EM Message)
-    :Field Public Shared ReadOnly ERROR_STOP←1001 '' ''  ⍝ error returned when hitting a breakpoint
+    :Field Public Shared ReadOnly ERROR_OK←0 0 '' ''  ⍝ error←(EN ENX EM Message)
+    :Field Public Shared ReadOnly ERROR_STOP←1001 0 '' ''  ⍝ error returned when hitting a breakpoint
     :Field Public Shared ReadOnly NO_ERROR←0⍴⊂ERROR_OK       ⍝ no error produces this list of errors
     :Field Public Shared ReadOnly ERROR_BREAK←,⊂ERROR_STOP   ⍝ simple breakpoint produces this list of errors
     :Field Public Shared ReadOnly NO_WIN←0⍴⎕NULL   ⍝ empty list of windows (force prototype to ⎕NULL)
@@ -155,8 +158,8 @@
     :Field Private WINS←NO_WIN                  ⍝ list of editor/tracer windows currently opened
 
 
-    Resignal←⎕SIGNAL∘{⍵/⊂⎕DMX.(('EN'EN)('EM'EM)('Message'Message))}
-    Signal←⎕SIGNAL∘{(en em msg)←⍵ ⋄ ('EN' en)('EM' em)('Message'msg)}
+    Resignal←⎕SIGNAL∘{⍵/⊂⎕DMX.(('EN'EN)('ENX' ENX)('EM'EM)('Message'Message))}
+    Signal←⎕SIGNAL∘{(en enx em msg)←⍵ ⋄ ('EN' en)('ENX' enx)('EM' em)('Message'msg)}
 
     Error←{IsInteger ⍺: ((⍺+2)⊃⎕SI)∇⍵ ⋄ ((⍕⎕THIS),' ',⍺,' failed: ',⍕⍵)⎕SIGNAL ERRNO}
     Log←{⎕←(⍕⎕THIS),' ',⍺,': ',,⍕⍵ ⋄ 1:_←⍵}
@@ -242,7 +245,7 @@
       :EndIf
       tm1←'SupportedProtocols=2' ⋄ tm2←'UsingProtocol=2'
       ⎕DF('@',host,':',⍕port){(¯1↓⍵),⍺,(¯1↑⍵)}⍕⎕THIS
-      :If 0≠⊃(_ CLIENT)←2↑r←DRC.Clt''host port'Text' 100000
+      :If 0≠⊃(_ CLIENT)←2↑r←DRC.Clt''host port'Text'((1+DEBUG)⊃BUFSIZE)
           'Constructor'Error'Could not connect to server ',host,':',⍕port
       :ElseIf (1⍴⊂tm1)≡Read 0  ⍝ first message is not JSON
       :AndIf Send tm1
@@ -250,7 +253,7 @@
       :AndIf Send tm2
       :AndIf (0⍴⊂'')≡Read 1
       :AndIf Send'["Identify",{"identity":1}]'
-      :AndIf ('Identify' 'UpdateDisplayName')≡⊃¨Read 1
+      :AndIf {(∧/'Identify' 'UpdateDisplayName'∊⍵)∧(0∊⍴⍵~'Identify' 'UpdateDisplayName' 'FocusThread' 'SetPromptType' 0)}⊃¨Read 1  ⍝ interpreter sends 1 or more 'Identify' 'UpdateDisplayName', and one or more FocusThread and SetPromptType
       :AndIf Send'["Connect",{"remoteId":2}]'
       :AndIf {(1=+/⍵≡¨⊂'SetPromptType')∧(0∊⍴⍵~'ReplyGetLog' 'SetPromptType')}⊃¨Read 1  ⍝ interpreter sends 0 or more 'ReplyGetLog'  and one 'SetPromptType'
       :AndIf Send'["GetWindowLayout",{}]'  ⍝ what's this for ????
@@ -333,9 +336,10 @@
       :EndIf
     ∇
 
-    ∇ EmptyQueue msg;messages
+    ∇ {timeout}EmptyQueue msg;messages
     ⍝ empty message queue, expecting it to be empty
-      messages←0 Read 1  ⍝ do not wait for new messages
+      :If 0=⎕NC'timeout' ⋄ timeout←0 ⋄ :EndIf  ⍝ do not wait for new messages
+      messages←timeout Read 1
       :If ~0∊⍴messages ⋄ msg LogInfo'Message queue not empty: ',⍕⊃¨messages ⋄ :EndIf
     ∇
 
@@ -360,7 +364,7 @@
       :Else ⋄ id←¯1+⌊/0,WINS.id
       :EndIf
     ∇
-    ∇ (prompt output wins errors)←fn ProcessMessages messages;arguments;command;em;en;msg;win
+    ∇ (prompt output wins errors)←fn ProcessMessages messages;arguments;command;em;en;enx;msg;win
       prompt←¯1             ⍝ ¯1 = prompt unset, 0 = no prompt, 1 = the usual 6-space APL prompt (a.k.a. Descalc or "desktop calculator"), 2 = Quad(⎕) input, 3 = ∇ line editor, 4 = Quote-Quad(⍞) input, 5 = any prompt type unforeseen here.
       output←''             ⍝ session output (string with newlines)
       wins←NO_WIN           ⍝ saved/modified windows (list of namespaces from WINS)
@@ -374,18 +378,9 @@
           :Case 'AppendSessionOutput'
               output,←⊂{LF=⊃⌽⍵:NL@(≢⍵)⊢⍵ ⋄ ⍵}arguments.result
           :Case 'HadError'  ⍝ ⎕SIGNAL within APL execution
-              ⍝ done←1   ⍝ not necessary - SetPromptType should still be called
-              (en em msg)←Execute¨'⎕DMX.EN' '⎕DMX.EM' '⎕DMX.Message'  ⍝ would infinitely loop on error
-              :If (1∨.≠1⊃¨en em msg) ⋄ :OrIf (NL∨.≠{⊃⌽⍵}¨2⊃¨en em msg) ⋄ :OrIf 0∨.<⊃∘⍴¨3⊃¨en em msg ⋄ :OrIf 0∨.<⊃∘⍴¨4⊃¨en em msg
-                  fn Error'Failed to retrieve ⎕DMX information'
-              :EndIf
-              (en em msg)←¯1↓¨2⊃¨en em msg  ⍝ keep output only
-              en←⊃2⊃⎕VFI en ⋄ en-←en=0  ⍝ failed ⎕VFI would produce (⎕SIGNAL 0) which is a no-op !
-              errors,←⊂(en em msg)
+              errors,←⊂(en enx em msg)←arguments.(error dmx'' '') ⍝ arguments.dmx gives ⎕DMX.ENX
           :Case 'InternalError'  ⍝ Error within RIDE message processing
-              ⍝ done←1   ⍝ not necessary - SetPromptType should still be called
-              errors,←⊂(en em msg)←arguments.(error error_text dmx)
-              ⍝ arguments.message gives the failing RIDE command
+              errors,←⊂(en enx em msg)←arguments.(error error_text dmx) ⍝ arguments.message gives the failing RIDE command
           :CaseList 'OpenWindow' 'UpdateWindow'
               win←1 GetWindow arguments.token
               win.(title text line stop saved)←arguments.(name text currentRow stop ⍬)
@@ -460,25 +455,33 @@
 
 
 
-    ∇ (prompt output wins errors)←{wait}WaitSub fn;done;nothing;numwins;waitprompts;waitwins
+    ∇ (prompt output wins errors)←{wait}(fn WaitSub)waitmessages;done;messages;nothing;numwins;timeout;waitmessages;waitprompts;waitwins
       :If 0=⎕NC'wait' ⋄ :OrIf 0∊⍴wait ⋄ (waitprompts waitwins)←⍬ 0  ⍝ wait for nothing - first non-zero prompt or touched window
       :Else ⋄ (waitprompts waitwins)←wait  ⍝ wait for both conditions
       :EndIf
-      prompt←⍬ ⋄ output←'' ⋄ wins←NO_WIN ⋄ errors←NO_ERROR ⋄ numwins←0
+      ⍝ waitmessages is a depth-3 list of RIDE protocol messages, at least one of the lists must have all its messages received
+      :If 0∊⍴waitmessages ⋄ waitmessages←0⍴⊂0⍴⊂''
+      :Else ⋄ waitmessages←,¨¨{,⊆,⍵}¨{⊂⍣(2≥|≡⍵)⊢⍵}{,⊆,⍵}waitmessages
+      :EndIf
+      :If 2>|≡waitmessages ⋄ waitmessages←{,⊆,⍵}¨waitmessages ⋄ :EndIf
+      :If 3>|≡waitmessages ⋄ waitmessages←,⊂waitmessages ⋄ :EndIf
+      prompt←⍬ ⋄ output←'' ⋄ wins←NO_WIN ⋄ errors←NO_ERROR ⋄ numwins←0 ⋄ timeout←0 ⋄ messages←0⍴⊂''
       :If ~0 IsPrompts waitprompts←,waitprompts ⋄ fn Error'Invalid awaited prompt types: ',⍕waitprompts
       :ElseIf IsInteger waitwins ⋄ :AndIf waitwins≥0 ⋄ numwins←1  ⍝ target number of windows
       :ElseIf 0∊⍴waitwins←,waitwins ⋄ :OrIf ∧/IsWin¨waitwins ⋄ numwins←0  ⍝ list of windows to touch
       :Else ⋄ fn Error'Invalid awaited windows: ',⍕waitwins
       :EndIf
-      :If numwins ⋄ nothing←waitwins=0 ⋄ :Else ⋄ nothing←0∊⍴wins ⋄ :EndIf
+      :If numwins ⋄ nothing←waitwins=0 ⋄ :Else ⋄ nothing←0∊⍴waitwins ⋄ :EndIf
       nothing∧←0∊⍴waitprompts
       :Repeat
-          (prompt output wins errors),←fn ProcessMessages Read 1
-          :If nothing ⋄ done←(0∨.≠prompt)∨(~0∊⍴wins)
+          :If ~DEBUG ⋄ timeout←TIMEOUT⌊timeout+10 ⋄ :EndIf  ⍝ crank up timeout 10 ms at a time to avoid consuming too much CPU
+          (prompt output wins errors),←fn ProcessMessages messages,←timeout Read 1
+          :If nothing ⋄ done←(∨/~prompt∊¯1 0)∨(~0∊⍴wins)
           :Else
               :If numwins ⋄ done←waitwins≤≢wins ⋄ :Else ⋄ done←∧/waitwins∊wins ⋄ :EndIf
               done∧←(0∊⍴waitprompts)∨(∨/prompt∊waitprompts)
           :EndIf
+          done∧←(0∊⍴waitmessages)∨(∨/∧/¨waitmessages∊¨⊂⊃¨messages)
       :Until done
       prompt←⊃⌽¯1,prompt~¯1  ⍝ only the last prompt set is interesting
       wins←∪wins  ⍝ window may get several messages e.g. UpdateWindow+SetHighlightLine
@@ -489,13 +492,13 @@
     ⍝ Get last prompt type, session output, touched windows and thrown errors
     ⍝ wait may be empty or specify (waitprompts waitwins)
       :Access Public
-      (prompt output wins errors)←wait WaitSub'Wait'
+      (prompt output wins errors)←wait('Wait'WaitSub)⍬
     ∇
     ∇ result←Resume wait
     ⍝ Resume execution of all threads
       :Access Public
       Send'["RestartThreads",{}]'
-      result←wait WaitSub'Resume'
+      result←wait('Resume'WaitSub)⍬
     ∇
     ∇ result←{wait}Execute expr;wins
     ⍝ Execute an APL expression.
@@ -504,7 +507,7 @@
       :If ~IsString expr←,expr ⋄ 'Execute'Error'Expression must be a string' ⋄ :EndIf
       EmptyQueue'Execute'
       Send'["Execute",{"text":',(1 ⎕JSON expr,LF),',"trace":0}]'  ⍝ DOC error : trace is 0|1 not true|false
-      result←wait WaitSub'Execute'
+      result←wait('Execute'WaitSub)⍬
     ∇
     ∇ result←{wait}Trace expr;wins
     ⍝ Trace into an APL expression.
@@ -513,40 +516,56 @@
       :If ~IsString expr←,expr ⋄ 'Trace'Error'Expression must be a string' ⋄ :EndIf
       EmptyQueue'Trace'
       Send'["Execute",{"text":',(1 ⎕JSON expr,LF),',"trace":1}]'  ⍝ DOC error : trace is 0|1 not true|false
-      result←wait WaitSub'Trace'
+      result←wait('Trace'WaitSub)⍬
     ∇
     ∇ result←{wait}TraceRun win
     ⍝ Run current line and move to next (step over)
       :Access Public
       :If 0=⎕NC'wait' ⋄ wait←⊢ ⋄ :EndIf
       Send'["RunCurrentLine",{"win":',(1 ⎕JSON win.id),'}]'
-      result←wait WaitSub'TraceRun'
+      result←wait('TraceRun'WaitSub)⍬
     ∇
     ∇ result←{wait}TraceInto win
     ⍝ Run current line and trace callees (step into)
       :Access Public
       :If 0=⎕NC'wait' ⋄ wait←⊢ ⋄ :EndIf
       Send'["StepInto",{"win":',(1 ⎕JSON win.id),'}]'
-      result←wait WaitSub'TraceInto'
+      result←wait('TraceInto'WaitSub)⍬
     ∇
     ∇ result←{wait}TraceResume win
     ⍝ Resume execution of current thread
       :Access Public
       :If 0=⎕NC'wait' ⋄ wait←⊢ ⋄ :EndIf
       Send'["Continue",{"win":',(1 ⎕JSON win.id),'}]'
-      result←wait WaitSub'TraceResume'
+      result←wait('TraceResume'WaitSub)⍬
     ∇
     ∇ result←{wait}TraceReturn win
     ⍝ Run current function until return to next line of caller
       :Access Public
       :If 0=⎕NC'wait' ⋄ wait←⊢ ⋄ :EndIf
       Send'["ContinueTrace",{"win":',(1 ⎕JSON win.id),'}]'
-      result←wait WaitSub'TraceReturn'
+      result←wait('TraceReturn'WaitSub)⍬
     ∇
 
+    ∇ num←fn VFI txt;ok
+    ⍝ convert a single number
+      (ok num)←⎕VFI txt
+      :If (ok≡,1) ⋄ num←⊃num
+      :Else ⋄ fn Error'Could not parse number: ',txt
+      :EndIf
+    ∇
+    ∇ (en enx em msg)←GetError;r
+    ⍝ Get last APL error information
+      :Access Public
+      r←Execute¨'⎕DMX.EN' '⎕DMX.ENX' '⎕DMX.EM' '⎕DMX.Message'  ⍝ would infinitely loop on error
+      :If (1∨.≠1⊃¨r) ⋄ :OrIf (NL∨.≠{⊃⌽⍵}¨2⊃¨r) ⋄ :OrIf 0∨.<⊃∘⍴¨3⊃¨r ⋄ :OrIf 0∨.<⊃∘⍴¨4⊃¨r
+          'GetError'Error'Failed to retrieve ⎕DMX information'
+      :EndIf
+      (en enx em msg)←¯1↓¨2⊃¨r  ⍝ keep output only
+      (en enx)←'GetError'∘VFI¨en enx
+    ∇
 
-
-    ∇ result←{response}Reply win;result
+    ∇ {response}Reply win;result
     ⍝ response must be one of win.options or win.index for Options and Task dialogs
     ⍝ response must be a string for String dialogs
     ⍝ No response means close the window
@@ -564,9 +583,7 @@
           :If 0=⎕NC'reponse' ⋄ response←win.value ⋄ :EndIf  ⍝ edit field untouched
           Send'["Reply',win.type,'Dialog",{"value":',(1 ⎕JSON response),',"token":',(1 ⎕JSON win.id),'}]'
       :EndSelect
-      result←WaitSub'Reply'  ⍝ wait for prompt type to come back
       RemoveWindows win
-      ⍝ (3⊃result),←win ⍝ Could arguably append win to the list of windows in the result ? But it would be inconditional (not supported by RIDE protocol)
     ∇
 
     ∇ {list}←{list}RemoveWindows wins;default
@@ -575,19 +592,21 @@
       list~←wins ⋄ :If 0∊⍴list ⋄ list←NO_WIN ⋄ :EndIf
       :If default ⋄ WINS←list ⋄ :EndIf
     ∇
-    ∇ CloseWindow win;errors;message;messages;ok;output;prompt;wins
+    ∇ CloseWindow win;done;errors;line;message;messages;ok;output;prompt;wins
     ⍝ Close an edit or tracer window
       :Access Public
       :If ~IsWin win ⋄ 'CloseWindow'Error'Argument must be a window' ⋄ :EndIf
       :Select win.type
       :CaseList 'Editor' 'Tracer'
           Send message←'["CloseWindow",{"win":',(1 ⎕JSON win.id),'}]'
-          (prompt output wins errors)←⍬ win WaitSub'CloseWindow'
-          ok←(prompt≡¯1)∧(output≡'')∧(errors≡NO_ERROR)∧(wins≡,⊂win)
-          :If ok∧(~IsWin win) ⍝ actually closed the window
-          :ElseIf ok∧(IsWin win) ⋄ :AndIf 'Tracer'≡win.type  ⍝ edit turned back into a tracer
-          :Else ⋄ 'CloseWindow'Error'Failed to close window ',⍕win.id
-          :EndIf
+          :Repeat
+              (prompt output wins errors)←⍬ win('CloseWindow'WaitSub)('CloseWindow')('WindowTypeChanged' 'SetHighlightLine')  ⍝ turning editor into tracer requires two messages : WindowTypeChanged, SetHighlightLine
+              ok←(prompt≡¯1)∧(output≡'')∧(errors≡NO_ERROR)∧(wins≡,⊂win)
+              :If ok∧(~IsWin win) ⋄ done←1 ⍝ actually closed the window
+              :ElseIf ok∧(IsWin win) ⋄ :AndIf 'Tracer'≡win.type ⋄ done←1  ⍝ edit turned back into a tracer
+              :Else ⋄ done←0 ⍝ 'CloseWindow'Error'Failed to close window ',⍕win.id
+              :EndIf
+          :Until done
       :CaseList 'Options' 'Task' 'String'
           Reply win
       :CaseList 'Notification' 'Html'
@@ -607,16 +626,16 @@
       :If 0∊⍴WINS ⋄ toclose←WINS
       :Else ⋄ toclose←(WINS.type∊'Editor' 'Tracer')/WINS
       :EndIf
-      :If 0∊⍴toclose ⋄ EmptyQueue'CloseAllWindows' ⋄ :EndIf  ⍝ ensure no response
-      :While ~0∊⍴toclose
-          (prompt output wins errors)←⍬ 1 WaitSub'CloseAllWindows'
-          :If ~prompt∊¯1 1 ⋄ 'CloseAllWindows'Error'Produced unexpected prompt: ',⍕prompt
-          :ElseIf errors≢NO_ERROR ⋄ 'CloseAllWindows'Error'Produced unexpected errors: ',⍕errors
-          :ElseIf output≢'' ⋄ 'CloseAllWindows'Error'Produced unexpected output: ',⍕output
-          :ElseIf {1∨.≠(+/⍵),(+⌿⍵)}toclose∘.≡wins ⋄ 'CloseAllWindows'Error'Did not produce close all windows'
-          :EndIf
-          toclose~←wins
-      :EndWhile
+      :If 0∊⍴toclose ⋄ TIMEOUT EmptyQueue'CloseAllWindows' ⋄ :Return ⋄ :EndIf  ⍝ ensure no response
+      ⍝:While ~0∊⍴toclose
+      (prompt output wins errors)←⍬ toclose('CloseAllWindows'WaitSub)⍬
+      :If ~prompt∊¯1 1 ⋄ 'CloseAllWindows'Error'Produced unexpected prompt: ',⍕prompt
+      :ElseIf errors≢NO_ERROR ⋄ 'CloseAllWindows'Error'Produced unexpected errors: ',⍕errors
+      :ElseIf output≢'' ⋄ 'CloseAllWindows'Error'Produced unexpected output: ',⍕output
+      :ElseIf {1∨.≠(+/⍵),(+⌿⍵)}toclose∘.≡wins ⋄ 'CloseAllWindows'Error'Did not produce close all windows'
+      :EndIf
+      ⍝    toclose~←wins
+      ⍝:EndWhile
     ∇
 
 
@@ -635,7 +654,7 @@
       expr←type,'⎕ED',⍕Stringify name
       EmptyQueue'ED'
       Send'["Execute",{"text":',(1 ⎕JSON expr,LF),',"trace":false}]'
-      (prompt output wins errors)←⍬ 1 WaitSub'ED'
+      (prompt output wins errors)←1 1('ED'WaitSub)⍬
       :If prompt≢1 ⋄ 'ED'Error'Produced unexpected prompt: ',⍕prompt
       :ElseIf ~0∊⍴errors ⋄ 'ED'Error'Produced unexpected errors: ',⍕errors
       :ElseIf ~0∊⍴output ⋄ 'ED'Error'Produced unexpected output: ',⍕output
@@ -656,7 +675,7 @@
       win←NO_WIN  ⍝ failed to open anything
       EmptyQueue'EditOpen'
       Send'["Edit",{"win":0,"text":',(1 ⎕JSON name),',"pos":1,"unsaved":{}}]'  ⍝ ⎕BUG doesn't work if unsaved not specified ? ⎕DOC : win must be 0 to create a new window
-      (prompt output wins errors)←⍬ 1 WaitSub'EditOpen'
+      (prompt output wins errors)←⍬ 1('EditOpen'WaitSub)⍬
       :If prompt≢¯1 ⋄ 'EditOpen'Error'Produced unexpected prompt: ',⍕prompt
       :ElseIf NO_ERROR≢errors ⋄ 'EditOpen'Error'Produced unexpected error: ',⍕errors
       :ElseIf ''≢output ⋄ 'EditOpen'Error'Produced unexpected output: ',⍕output
@@ -684,7 +703,7 @@
       win.saved←⍬
       EmptyQueue'EditFix'
       Send'["SaveChanges",{"win":',(1 ⎕JSON win.id),',"text":',(1 ⎕JSON src),',"stop":',(1 ⎕JSON stops),'}]'
-      (prompt output wins errors)←⍬ 1 WaitSub'EditFix'
+      (prompt output wins errors)←⍬ 1('EditFix'WaitSub)⍬
       :If ~prompt∊¯1 1 ⋄ 'EditFix'Error'Produced unexpected prompt: ',⍕prompt  ⍝ ⎕BUG ? Even though promptype was already 1, SaveChanges may trigger two SetPromptType(1) messages before the ReplySaveChanges, and may trigger one before an OptionsDialog
       :ElseIf NO_ERROR≢errors ⋄ 'EditFix'Error'Produced unexpected error: ',⍕errors
       :ElseIf ''≢output ⋄ 'EditFix'Error'Produced unexpected output: ',⍕output
@@ -710,7 +729,7 @@
           :If 1≠≢win ⋄ 'Reformat'Error'Failed to edit a new name' ⋄ :EndIf
           win←⊃win ⋄ win.saved←⍬ ⋄ EmptyQueue'Reformat'
           Send'["FormatCode",{"win":',(1 ⎕JSON win.id),',"text":',(1 ⎕JSON src),'}]'
-          (prompt output wins errors)←⍬ 1 WaitSub'Reformat'
+          (prompt output wins errors)←⍬ 1('Reformat'WaitSub)⍬
           :If prompt≢¯1 ⋄ 'Reformat'Error'Produced unexpected prompt: ',⍕prompt
           :ElseIf NO_ERROR≢errors ⋄ 'Reformat'Error'Produced unexpected error: ',⍕errors
           :ElseIf ''≢output ⋄ 'Reformat'Error'Produced unexpected output: ',⍕output
@@ -731,38 +750,31 @@
 
 
 
+    ∇ fn _TraceChangedLine win;errors;ok;output;prompt;wins
+    ⍝ Wait for tracer to change its line - will wait forever if it doesn't happen
+      (prompt output wins errors)←⍬ win(fn WaitSub)'SetHighlightLine'
+      ok←(prompt≡¯1)∧(output≡'')∧(errors≡NO_ERROR)∧(wins≡,⊂win)
+      ok∧←(IsWin win)∧('Tracer'≡win.type)  ⍝ edit turned back into a tracer
+      :If ~ok ⋄ fn Error'Failed to changed Tracer line' ⋄ :EndIf
+    ∇
+
     ∇ TraceCutback win;errors;output;wins
     ⍝ Cut back to caller (no code execution)
       :Access Public
       Send'["Cutback",{"win":',(1 ⎕JSON win.id),'}]'
-      :If ¯1 ''(,win)NO_ERROR≢⍬ 1 WaitSub'TraceCutback'
-          'TraceCutback'Error'Failed'
-      :EndIf
+      'TraceCutback'_TraceChangedLine win
     ∇
-
     ∇ TraceNext win
     ⍝ Jump to next tracer line (no code execution)
       :Access Public
       Send'["TraceForward",{"win":',(1 ⎕JSON win.id),'}]'
-      :If ¯1 ''(,win)NO_ERROR≢⍬ 1 WaitSub'TraceNext'
-          'TraceNext'Error'Failed'
-      :EndIf
+      'TraceNext'_TraceChangedLine win
     ∇
     ∇ TracePrev win
     ⍝ Jump to previous tracer line (no code execution)
       :Access Public
       Send'["TraceBackward",{"win":',(1 ⎕JSON win.id),'}]'
-      :If ¯1 ''(,win)NO_ERROR≢⍬ 1 WaitSub'TracePrev'
-          'TracePrev'Error'Failed'
-      :EndIf
-     
-    ∇
-    ∇ win TraceJump line;diff
-    ⍝ Jump to arbitrary tracer line (no code execution)
-      :Access Public
-      :If 0<diff←line-win.line ⋄ TraceNext¨diff⍴win
-      :ElseIf 0>diff ⋄ TracePrev¨(-diff)⍴win
-      :EndIf
+      'TracePrev'_TraceChangedLine win
     ∇
     ∇ win SetStops stops
     ⍝ Change stop points of trace or edit window
@@ -771,9 +783,7 @@
       :If ~IsWin win ⋄ 'SetStops'Error'Left argument must be a window' ⋄ :EndIf
       EmptyQueue'SetStops'
       Send'["SetLineAttributes",{"win":',(1 ⎕JSON win.id),',"stop":',(1 ⎕JSON stops),'}]'
-      :If ¯1 ''NO_WIN NO_ERROR≢⍬ 0 WaitSub'SetStops'  ⍝ do not expect significant processing
-          'SetStops'Error'Failed'
-      :EndIf
+      TIMEOUT EmptyQueue'SetStops' ⍝ no response to this message
       win.stop←stops
     ∇
     ∇ (traces stops monitors)←ClearTraceStopMonitor;messages
@@ -794,7 +804,7 @@
 
 
 
-    ∇ ok←_RunQA stop;BUG;_Reformat;dup;dup2;dupstops;dupwin;error;foo;foowin;goo;goowin;html;ok;ondisk;ondisk2;output;r;src;src1;src2;tmpdir;tmpfile;win;win2;∆
+    ∇ ok←_RunQA stop;BUG;_Reformat;dup;dup2;dupstops;dupwin;error;foo;foowin;goo;goowin;html;ok;ondisk;ondisk2;output;r;src;src1;src2;tmp;tmpdir;tmpfile;win;win2;∆
       :Access Public
       ∆←stop{⍺←'' ⋄ ⍵≡1:⍵ ⋄ ⍺⍺:0⊣'QA'Error ⍺ ⋄ 0⊣'QA'LogWarn ⍺}
       ok←1
@@ -805,8 +815,9 @@
       ⍝ Execution : APL, session, error
       ok∧←'Execute meaning of life'∆ 1('42',NL)(NO_WIN)(NO_ERROR)≡Execute'⍎⊖⍕⊃⊂|⌊-*+○⌈×÷!⌽⍉⌹~⍴⍋⍒,⍟?⍳0'
       output←∊'DOMAIN ERROR: Divide by zero' '      ÷0' '      ∧',¨NL
-      error←11 'DOMAIN ERROR' 'Divide by zero'
-      ok∧←'Execute ÷0'∆ 1(output)(NO_WIN)(,⊂error)≡Execute'÷0'
+      error←11 1 'DOMAIN ERROR' 'Divide by zero'
+      ok∧←'Execute ÷0'∆ 1(output)(NO_WIN)(,⊂(2↑error),'' '')≡Execute'÷0'
+      ok∧←error≡GetError
      
       ⍝ Reformat
      
@@ -840,13 +851,13 @@
      
       ⍝ Tracer
      
-      ok∧←'Trace foo'∆ 1('')(WINS)(NO_ERROR)≡Trace'foo ''argument'' '
+      ok∧←'Trace foo'∆ 1('')(WINS)(NO_ERROR)≡1 1 Trace'foo ''argument'' '
       win←⊃WINS
-      ok∧←'TraceResume foo'∆ 1('this is foo',NL,'this is dup',NL,' argument  argument ',NL)(,⊂win)(NO_ERROR)≡TraceResume win ⍝ will close window
+      ok∧←'TraceResume foo'∆ 1('this is foo',NL,'this is dup',NL,' argument  argument ',NL)(,⊂win)(NO_ERROR)≡1 1 TraceResume win ⍝ will close window
       ok∧←'TraceResume effect'∆ WINS≡NO_WIN
      
       ok∧←'Execute ⎕STOP goo'∆ 1('1',NL)(NO_WIN)(NO_ERROR)≡Execute'+1 ⎕STOP ''goo'''       ⍝ set breakpoint
-      ok∧←'Execute goo'∆ 1(NL,'goo[1]',NL)(WINS)(ERROR_BREAK)≡Execute'goo ''hello'''  ⍝ pop up tracer on breakpoint
+      ok∧←'Execute goo'∆ 1(NL,'goo[1]',NL)(WINS)(ERROR_BREAK)≡1 1 Execute'goo ''hello'''  ⍝ pop up tracer on breakpoint
       win←⊃WINS
       ok∧←'Tracing goo[1]'∆('goo' 1 'Tracer'goo(,1))(,win)≡win.(title line type text stop)WINS
       ok∧←'Editing while tracing goo[1]'∆ win≡EditOpen'goo'
@@ -854,9 +865,9 @@
       CloseWindow win
       ok∧←'Closing goo[1] editor back into tracer'∆('goo' 1 'Tracer'goo(,1))(,win)≡win.(title line type text stop)WINS
      
-      ok∧←'TraceInto goo[1]'∆ 1('this is goo',NL)(,win)(NO_ERROR)≡TraceInto win  ⍝ goo[1]
+      ok∧←'TraceInto goo[1]'∆ 1('this is goo',NL)(,win)(NO_ERROR)≡1 1 TraceInto win  ⍝ goo[1]
       ok∧←'Tracing goo[2]'∆('goo' 2 'Tracer'goo(,1))(,win)≡win.(title line type text stop)WINS
-      ok∧←'TraceInto goo[2]'∆ 1('')(,win)(NO_ERROR)≡TraceInto win  ⍝ goo[2] → foo[1]
+      ok∧←'TraceInto goo[2]'∆ 1('')(,win)(NO_ERROR)≡1 1 TraceInto win  ⍝ goo[2] → foo[1]
       ok∧←'Tracing foo[1]'∆('foo' 1 'Tracer'foo ⍬)(,win)≡win.(title line type text stop)WINS
       TraceCutback win ⍝ → goo[2]
       ok∧←'Tracing goo[2]'∆('goo' 2 'Tracer'goo(,1))(,win)≡win.(title line type text stop)WINS
@@ -879,21 +890,21 @@
       ok∧←'Tracing goo[2] and changed stops'∆('goo' 2 'Tracer'goo(,2))('dup' 0 'Editor'dup dupstops)(win win2)≡win.(title line type text stop)win2.(title line type text stop)WINS
       TracePrev win ⋄ TracePrev win ⋄ TraceNext win
       ok∧←'Tracing back to goo[1]'∆('goo' 1 'Tracer'goo(,2))('dup' 0 'Editor'dup dupstops)(win win2)≡win.(title line type text stop)win2.(title line type text stop)WINS
-      ok∧←'TraceRetrun goo[1]'∆ 1('this is goo',NL NL,'goo[2]',NL)(,win)(ERROR_BREAK)≡TraceReturn win   ⍝ hitting stop point on goo[2]
+      ok∧←'TraceRetrun goo[1]'∆ 1('this is goo',NL NL,'goo[2]',NL)(,win)(ERROR_BREAK)≡1 1 TraceReturn win   ⍝ hitting stop point on goo[2]
       ok∧←'Stopping at goo[2]'∆('goo' 2 'Tracer'goo(,2))('dup' 0 'Editor'dup dupstops)(win win2)≡win.(title line type text stop)win2.(title line type text stop)WINS
      
       ok∧←'Execute ⎕STOP foo'∆ 1('1',NL)(NO_WIN)(NO_ERROR)≡Execute' +1 ⎕STOP ''foo'' '
-      ok∧←'TraceRun goo[2]'∆ 1(NL,'foo[1]',NL)(,win)(ERROR_BREAK)≡TraceRun win  ⍝ hitting stop point on foo[1]
+      ok∧←'TraceRun goo[2]'∆ 1(NL,'foo[1]',NL)(,win)(ERROR_BREAK)≡1 1 TraceRun win  ⍝ hitting stop point on foo[1]
       ok∧←'Tracing foo[1]'∆('foo' 1 'Tracer'foo(,1))('dup' 0 'Editor'dup dupstops)(win win2)≡win.(title line type text stop)win2.(title line type text stop)WINS
-      ok∧←'TraceRun foo[1]'∆ 1('this is foo',NL)(,win)(NO_ERROR)≡TraceRun win  ⍝ foo[1] → foo[2]
+      ok∧←'TraceRun foo[1]'∆ 1('this is foo',NL)(,win)(NO_ERROR)≡1 1 TraceRun win  ⍝ foo[1] → foo[2]
       ok∧←'Tracing foo[2]'∆('foo' 2 'Tracer'foo(,1))('dup' 0 'Editor'dup dupstops)(win win2)≡win.(title line type text stop)win2.(title line type text stop)WINS
-      ok∧←'TraceRun foo[2]'∆ 1(NL,'dup[1]',NL)(,win)(ERROR_BREAK)≡TraceRun win
+      ok∧←'TraceRun foo[2]'∆ 1(NL,'dup[1]',NL)(,win)(ERROR_BREAK)≡1 1 TraceRun win
       ok∧←'Tracing dup[1]'∆('dup' 1 'Tracer'dup(0 1 2))('dup' 0 'Editor'dup dupstops)(win win2)≡win.(title line type text stop)win2.(title line type text stop)WINS
      
-      ok∧←'TraceResume dup[1]'∆ 1('this is dup',NL NL,'dup[2]',NL)(win,⊃⌽WINS)(ERROR_BREAK)≡TraceResume win
+      ok∧←'TraceResume dup[1]'∆ 1('this is dup',NL NL,'dup[2]',NL)(win,⊃⌽WINS)(ERROR_BREAK)≡1 1 TraceResume win
       win←⊃⌽WINS  ⍝ resume has closed the previous window and opens a new one
       ok∧←'Tracing dup[2]'∆('dup' 2 'Tracer'dup(0 1 2))('dup' 0 'Editor'dup dupstops)(win2 win)≡win.(title line type text stop)win2.(title line type text stop)WINS
-      ok∧←'TraceResume dup[2]'∆ 1(NL,'dup[0]',NL)(win,⊃⌽WINS)(ERROR_BREAK)≡TraceResume win
+      ok∧←'TraceResume dup[2]'∆ 1(NL,'dup[0]',NL)(win,⊃⌽WINS)(ERROR_BREAK)≡1 1 TraceResume win
       win←⊃⌽WINS  ⍝ resume has closed the previous window and opens a new one
       ok∧←'Tracing dup[0]'∆('dup' 0 'Tracer'dup(0 1 2))('dup' 0 'Editor'dup dupstops)(win2 win)≡win.(title line type text stop)win2.(title line type text stop)WINS
      
@@ -902,7 +913,7 @@
       ok∧←'Closed dup editor'∆('dup' 0 'Tracer'dup(0 1 2))('dup' 0 'Editor'dup ⍬)(,win)≡win.(title line type text stop)win2.(title line type text stop)WINS  ⍝ win2 is now close but we check that its fields were updated
       ok∧←'⎕STOP dup'∆ 1(,NL)(NO_WIN)(NO_ERROR)≡Execute'+⎕STOP ''dup'' '
      
-      ok∧←'TraceReturn dup[0]'∆ 1('')(,win)(NO_ERROR)≡TraceReturn win
+      ok∧←'TraceReturn dup[0]'∆ 1('')(,win)(NO_ERROR)≡1 1 TraceReturn win
       ok∧←'Tracing foo[0]'∆('foo' 0 'Tracer'foo(,1))(,win)≡win.(title line type text stop)WINS
      
       :If 0  ⍝ mantis 18335: RestartThreads doesn't resume execution on linux
@@ -923,7 +934,7 @@
       ⍝ Dialog boxes
      
       html←'<!DOCTYPE html> <html> <body> hello </body> </html>'
-      ok∧←'3500⌶'∆ 1('0',NL)(WINS)(NO_ERROR)≡Execute'3500⌶''',html,''''
+      ok∧←'3500⌶'∆ 1('0',NL)(WINS)(NO_ERROR)≡1 1 Execute'3500⌶''',html,''''
       ok∧←'3500⌶ contents'∆(⊃WINS).text≡,⊂html
       CloseWindow⊃WINS
       ok∧←'Closed 3500⌶ window'∆ WINS≡NO_WIN
@@ -932,11 +943,13 @@
       ⍝buttons←(,⊂'OK')('OK' 'CANCEL')('RETRY' 'CANCEL')('YES' 'NO')('YES' 'NO' 'CANCEL')('ABORT' 'RETRY' 'IGNORE')  ⍝ valid buttons
       ok∧←'3503⌶'∆ 0 ''(WINS)(NO_ERROR)≡Execute'3503⌶''Caption'' (''Text 1'' ''Text 2'') ''Info'' (''abort'' ''RETRY'' ''IgNoRe'')'
       ok∧←'3503⌶ window'∆'Caption'('Text 1',CR LF,'Text 2')'Options'('Abort' 'Retry' 'Ignore')(0 1 2)≡(⊃WINS).(title text type options index)  ⍝ ⎕BUG newline is CR+LF !!!
-      ok∧←'Monadic Reply'∆ 1('62',NL)NO_WIN NO_ERROR≡Reply⊃WINS  ⍝ ⎕BUG : closing abort/retry/ignore selects retry
+      Reply⊃WINS  ⍝ ⎕BUG : closing abort/retry/ignore selects retry
+      ok∧←'Monadic Reply'∆ 1('62',NL)NO_WIN NO_ERROR≡Wait 1 ⍬  ⍝ does not touch a window
       ok∧←'Monadic Reply effect'∆ WINS≡NO_WIN
       ok∧←'3503⌶'∆ 0 ''(WINS)(NO_ERROR)≡Execute'3503⌶''Caption'' (''Text 1'' ''Text 2'') ''Error'' (''Yes'' ''No'' ''Cancel'')'
       ok∧←'3503⌶ window'∆'Caption'('Text 1',CR LF,'Text 2')'Options'('Yes' 'No' 'Cancel')(0 1 2)≡(⊃WINS).(title text type options index)  ⍝ ⎕BUG newline is CR+LF !!!
-      ok∧←'Dyadic Reply'∆ 1('61',NL)NO_WIN NO_ERROR≡'Yes'Reply⊃WINS
+      'Yes'Reply⊃WINS
+      ok∧←'Dyadic Reply'∆ 1('61',NL)NO_WIN NO_ERROR≡Wait 1 ⍬  ⍝ does not touch a window
       ok∧←'Dyadic Reply effect'∆ WINS≡NO_WIN
      
       ok∧←'739⌶0'∆ 1 NO_WIN NO_ERROR≡(⊂1 3 4)⌷r←Execute'739⌶0' ⍝ get temporary directory
@@ -951,14 +964,16 @@
       ok∧←'Deleting temp file'∆ 1('1',NL)NO_WIN NO_ERROR≡Execute'⎕←⎕NDELETE ''',tmpfile,''''
       ok∧←'EditFix temp file'∆(⊃⌽WINS)≡win2←win EditFix ondisk2  ⍝ will pop up a window to complain that file has disappeared
       ok∧←'EditFix temp file effect'∆ WINS≡win win2
-      ok∧←'EditFix Reply fix&write'∆ 1 ''(,win)NO_ERROR≡100 Reply win2   ⍝ fix and write back to file
+      100 Reply win2   ⍝ fix and write back to file
+      ok∧←'EditFix Reply fix&write'∆ 1 ''(,win)NO_ERROR≡Wait 1 1  ⍝ touches a window AND returns to prompt
       ok∧←'EditFix Reply fix&write effect'∆(0≡win.saved)∧(WINS≡,⊂win)
       ok∧←'EditFix fix effect'∆ 1(,(↑ondisk2),NL)(NO_WIN)(NO_ERROR)≡Execute' ⎕CR ''OnDisk'' '  ⍝ function has changed
       ok∧←'EditFix write effect'∆ 1(,(↑ondisk2),NL)(NO_WIN)(NO_ERROR)≡Execute' ↑⊃ ⎕NGET ''',tmpfile,''' 1'  ⍝ file on disk has changed
      
       ok∧←'Deleting temp file'∆ 1('1',NL)NO_WIN NO_ERROR≡Execute'⎕←⎕NDELETE ''',tmpfile,''''
       ok∧←'EditFix temp file'∆(⊃⌽WINS)≡win2←win EditFix ondisk  ⍝ will pop up a window to complain that file has disappeared
-      ok∧←'EditFix Reply'∆ ¯1 ''(,win)NO_ERROR≡103 Reply win2   ⍝ discard changes
+      103 Reply win2   ⍝ discard changes
+      ok∧←'EditFix Reply'∆ ¯1 ''(,win)NO_ERROR≡Wait ⍬ 1  ⍝ updates window but prompt is unchanged
       CloseWindow win
       ok∧←'CloseWindow'∆ WINS≡NO_WIN
       ok∧←'EditFix effect'∆ 1(,(↑ondisk2),NL)(NO_WIN)(NO_ERROR)≡Execute' ⎕CR ''OnDisk'' '  ⍝ function hasn't changed
@@ -1000,17 +1015,18 @@
       :EndIf
     ∇
 
-    ∇ instance←New env
+    ∇ instance←{where}New env
     ⍝ Spawn a new interpreter, giving an environment string e.g. 'MAXWS=1G' or ''
       :Access Public Shared
-      instance←#.⎕NEW ⎕THIS env
+      :If 0=⎕NC'where' ⋄ where←⊃⎕RSI ⋄ :EndIf
+      instance←where.⎕NEW ⎕THIS env
     ∇
-    ∇ instance←Connect arg
+    ∇ instance←Connect arg;where
     ⍝ Connect to an listening interpreter at arg≡(port {host}) e.g. Connect (4600 '127.0.0.1')
       :Access Public Shared
       'Empty arg would spawn a new interpreter - use New instead'⎕SIGNAL(0∊⍴arg)/11
-      instance←#.⎕NEW ⎕THIS arg
-     
+      :If 0=⎕NC'where' ⋄ where←⊃⎕RSI ⋄ :EndIf
+      instance←where.⎕NEW ⎕THIS arg
     ∇
 
 :EndClass
