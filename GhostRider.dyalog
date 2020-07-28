@@ -110,7 +110,10 @@
 
 
 
-    :Field Public Shared ReadOnly Version←'1.3.1'
+    :Field Public Shared ReadOnly Version←'1.3.2'
+    ⍝ v1.3.2 - Nic 2020
+    ⍝   - avoid waiting the whole TIMEOUT in constructor
+    ⍝   - fixed QA, added bug repros
     ⍝ v1.3.1 - Nic 2020
     ⍝   - avoid waiting the whole TIMEOUT for messages, which is slow AND unreliable
     ⍝ v1.3.0 - Nic 2020
@@ -131,7 +134,7 @@
 
     :Field Public INFO←1                    ⍝ set to 1 to log debug information
     :Field Public TRACE←1                   ⍝ set to 1 to fully trace the RIDE protocol
-    :Field Public DEBUG←1                   ⍝ set to 1 to maximise the likelihood of finding a bug
+    :Field Public DEBUG←0                   ⍝ set to 1 to maximise the likelihood of finding a bug
 
     :Field Public TIMEOUT←200               ⍝ maximum Conga timeout in milliseconds for responses that don't require significant computation
     :Field Public BUFSIZE←2*15 4            ⍝ Conga buffer size for DEBUG=0 and DEBUG=1 - use small value for harsh QA that may miss messages
@@ -164,7 +167,7 @@
     Error←{IsInteger ⍺: ((⍺+2)⊃⎕SI)∇⍵ ⋄ ((⍕⎕THIS),' ',⍺,' failed: ',⍕⍵)⎕SIGNAL ERRNO}
     Log←{⎕←(⍕⎕THIS),' ',⍺,': ',,⍕⍵ ⋄ 1:_←⍵}
     LogWarn←{⍺←'' ⋄ 1:_←('Warning',(~0∊⍴⍺)/' ',⍺)Log ⍵}   ⍝ always warn
-    LogInfo←{⍺←'' ⋄ DEBUG:_←('Info',(~0∊⍴⍺)/' ',⍺)Log ⍵ ⋄ 1:_←⍵}
+    LogInfo←{⍺←'' ⋄ INFO:_←('Info',(~0∊⍴⍺)/' ',⍺)Log ⍵ ⋄ 1:_←⍵}
     TrimReplyGetLog←{pre←'["ReplyGetLog",{"result":[' ⋄ post←']}]' ⋄ (pre,post)≡((≢pre)↑⍵),((-≢post)↑⍵):pre,'...',post ⋄ ⍵}  ⍝ this one is too large to trace
     LogTrace←{TRACE:_←⍵⊣('Trace ',⍺)Log TrimReplyGetLog ⍵ ⋄ 1:_←⍵}
 
@@ -343,7 +346,7 @@
       :If 0∊⍴ignored ⋄ ignored←0⍴⊂'' ⋄ :Else ⋄ ignored←,⊆,ignored ⋄ :EndIf
       messages←,⊆,messages ⋄ read←0⍴⊂'' ⋄ timeout←0
       :Repeat
-          timeout←TIMEOUT⌊timeout+10
+          :If ~DEBUG ⋄ timeout←TIMEOUT⌊timeout+10 ⋄ :EndIf
           read,←⊃¨⍣json⊢timeout Read json  ⍝ if json, just care about the message header
       :Until ok←(∧/messages∊read)∧(0∊⍴read~messages∪ignored)
     ∇
@@ -817,10 +820,11 @@
 
 
 
-    ∇ ok←_RunQA stop;BUG;_Reformat;dup;dup2;dupstops;dupwin;error;foo;foowin;goo;goowin;html;ok;ondisk;ondisk2;output;r;src;src1;src2;stops;tmp;tmpdir;tmpfile;win;win2;∆
+    ∇ ok←_RunQA stop;BUG;_Reformat;debug;dup;dup2;dupstops;dupwin;error;foo;foowin;goo;goowin;html;ok;ondisk;ondisk2;output;r;src;src1;src2;stops;tmp;tmpdir;tmpfile;win;win2;∆
       :Access Public
       ∆←stop{⍺←'' ⋄ ⍵≡1:⍵ ⋄ ⍺⍺:0⊣'QA'Error ⍺ ⋄ 0⊣'QA'LogWarn ⍺}
       ok←1
+      debug←DEBUG ⋄ DEBUG←1  ⍝ maximise the likelihood of missing messages
      
       ok∧←'Execute )CLEAR'∆ 1('clear ws',NL)(NO_WIN)(NO_ERROR)≡Execute')CLEAR'
       ok∧←'Execute ]rows on'∆(r[2]∊'Was ON' 'Was OFF',¨NL)∧(1(NO_WIN)(NO_ERROR)≡(⊂1 3 4)⌷r←Execute']rows on')
@@ -926,7 +930,6 @@
      
       ok∧←'TraceReturn dup[0]'∆ 1('')(,win)(NO_ERROR)≡1 1 TraceReturn win  ⍝ expect prompt to come back and window to be updated
       ok∧←'Tracing foo[0]'∆('foo' 0 'Tracer'foo(,1))(,win)≡win.(title line type text stop)WINS
-     
       ok∧←'TraceResume'∆ 1(' hello  hello ',NL)(,win)(NO_ERROR)≡1 win TraceResume win  ⍝ resume execution of current thread - expect tracer window to close and prompt to come back
       ok∧←'No code running after TraceResume'∆ 1('1',NL)(NO_WIN)(NO_ERROR)≡Execute'(0∊⍴⎕SI)∧(0∊⍴⎕TNUMS~0)'
       ok∧←'Closed all windows after TraceResume'∆ WINS≡NO_WIN
@@ -936,13 +939,13 @@
       ok∧←'⎕TRACE'∆ 1(' 0 2  1 2 ',NL)(NO_WIN)(NO_ERROR)≡Execute'+(0 2) (1 2) ⎕TRACE¨ ''foo'' ''goo'''
       ok∧←'⎕MONITOR'∆ 1(' 0 2  1 ',NL)(NO_WIN)(NO_ERROR)≡Execute'+(0 2) 1 ⎕MONITOR¨ ''foo'' ''goo'''
       ok∧←'⎕STOP'∆ 1(' 1  2   ',NL)(NO_WIN)(NO_ERROR)≡Execute'+ ⎕STOP¨ ''foo'' ''goo'' ''dup'' '
-      stops←5 ⍝ BUG : interpreter thinks it has 5 stops whereas it has only 2
+      stops←5 ⍝ Mantis 18372 : interpreter thinks it has 5 stops whereas it has only 2
       ok∧←'ClearTraceStopMonitor'∆ 4 stops 3≡ClearTraceStopMonitor
      
       ⍝ Trace again for a Resume
       ok∧←'Tracing foo again'∆ 1('')(WINS)(NO_ERROR)≡1 1 Trace'foo ''world'' '  ⍝ expect a window and a prompt
       ok∧←'Stepping over foo[1]'∆ 1('this is foo',NL)(,win)(NO_ERROR)≡TraceRun win←⊃WINS
-      ok∧←'Resume'∆ 1('this is dup',NL,' world  world ',NL)(,win)(NO_ERROR)≡Resume 1 1  ⍝ mantis 18335: RestartThreads doesn't resume execution on linux
+      ok∧←'Resume'∆ 1('this is dup',NL,' world  world ',NL)(,win)(NO_ERROR)≡Resume 1 1  ⍝ mantis 18335/18371: RestartThreads doesn't resume execution on linux
       ok∧←'No code running after Resume'∆ 1('1',NL)(NO_WIN)(NO_ERROR)≡Execute'(0∊⍴⎕SI)∧(0∊⍴⎕TNUMS~0)'
       ok∧←'Closed all windows after Resume'∆ WINS≡NO_WIN
      
@@ -994,6 +997,8 @@
       ok∧←'EditFix effect'∆ 1(,(↑ondisk2),NL)(NO_WIN)(NO_ERROR)≡Execute' ⎕CR ''OnDisk'' '  ⍝ function hasn't changed
       ok∧←'EditFix effect'∆ 1('0',NL)(NO_WIN)(NO_ERROR)≡Execute' ⎕NEXISTS ''',tmpfile,''' '  ⍝ file is still deleted
       ok∧←'2 ⎕FIX ⎕NR OnDisk'∆ 1(' OnDisk ',NL)(NO_WIN)(NO_ERROR)≡Execute' +2 ⎕FIX ',⍕Stringify¨ondisk  ⍝ untie from file and put back original definition
+     
+      DEBUG←debug
     ∇
 
 
@@ -1005,6 +1010,7 @@
     ∇
 
     ∇ ok←_RunBug1 bug;errors;output;win;wins;prompt
+    ⍝ Repro for Mantis 18371
       :Access Public
       ok←1
       (prompt output wins errors)←Execute'+⎕FX ''foo'' ''⎕←1 2 3'' ''⎕←4 5 6'''
@@ -1022,7 +1028,8 @@
     ∇
 
     ∇ ok←_RunBug2 bug;ed;errors;foo;goo;output;prompt;tracer;wins
-    ⍝ the following behaviour may possibly require the bug Mantis 18308 NOT to be fixed (⎕STOP does not update opened windows)
+    ⍝ Repro for Mantis 18372 and 18308
+    ⍝ 18372 may possibly require the bug Mantis 18308 NOT to be fixed (⎕STOP does not update opened windows)
       :Access Public
       ok←1
       foo←' foo' ' ⎕←1 2 3' ' ⎕←4 5 6'
@@ -1045,12 +1052,15 @@
       ok∧←tracer.stop≡0 1 2
       ok∧←ed EditFix foo ⍬  ⍝ reset stops
       CloseWindow ed
+      :If bug  ⍝ Mantis 18308: interpreter ought to send a UpdateWindow on the tracer window
+          ok∧←trace.stop≡⍬
+      :EndIf
       ok∧←WINS≡,tracer
       (prompt output wins errors)←Execute'+⎕STOP ''foo'' '
       ok∧←prompt output wins errors≡1('',NL)(NO_WIN)(NO_ERROR)  ⍝ foo has no more stops according to interpreter
       (prompt output wins errors)←1 1 TraceResume tracer
       ok∧←prompt output wins errors≡1('1 2 3',NL,'4 5 6',NL)(,tracer)(NO_ERROR)
-      :If bug  ⍝ BUG:  clears 3 stops (from foo), whereas the interpreter thinks foo has no stops
+      :If bug  ⍝ Mantis 18372:  clears 3 stops (from foo), whereas the interpreter thinks foo has no stops
           ok∧←0 0 0≡ClearTraceStopMonitor
       :EndIf
     ∇
