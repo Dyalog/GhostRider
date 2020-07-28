@@ -247,20 +247,21 @@
       ⎕DF('@',host,':',⍕port){(¯1↓⍵),⍺,(¯1↑⍵)}⍕⎕THIS
       :If 0≠⊃(_ CLIENT)←2↑r←DRC.Clt''host port'Text'((1+DEBUG)⊃BUFSIZE)
           'Constructor'Error'Could not connect to server ',host,':',⍕port
-      :ElseIf (1⍴⊂tm1)≡Read 0  ⍝ first message is not JSON
+      :ElseIf (0 WaitFor)tm1  ⍝ first message is not JSON
       :AndIf Send tm1
-      :AndIf (1⍴⊂tm2)≡Read 0  ⍝ second message is not JSON
+      :AndIf (0 WaitFor)tm2  ⍝ second message is not JSON
       :AndIf Send tm2
-      :AndIf (0⍴⊂'')≡Read 1
+      :AndIf EmptyQueue'Identify'
       :AndIf Send'["Identify",{"identity":1}]'
-      :AndIf {(∧/'Identify' 'UpdateDisplayName'∊⍵)∧(0∊⍴⍵~'Identify' 'UpdateDisplayName' 'FocusThread' 'SetPromptType' 0)}⊃¨Read 1  ⍝ interpreter sends 1 or more 'Identify' 'UpdateDisplayName', and one or more FocusThread and SetPromptType
+      :AndIf 'FocusThread' 'SetPromptType'(1 WaitFor)'Identify' 'UpdateDisplayName'  ⍝ interpreter sends one 'Identify' and one 'UpdateDisplayName', and zero or more FocusThread or SetPromptType
       :AndIf Send'["Connect",{"remoteId":2}]'
-      :AndIf {(1=+/⍵≡¨⊂'SetPromptType')∧(0∊⍴⍵~'ReplyGetLog' 'SetPromptType')}⊃¨Read 1  ⍝ interpreter sends 0 or more 'ReplyGetLog'  and one 'SetPromptType'
+      :AndIf 'FocusThread' 'ReplyGetLog'(1 WaitFor)'SetPromptType'  ⍝ interpreter sends zero or more 'ReplyGetLog'  and one 'SetPromptType'
       :AndIf Send'["GetWindowLayout",{}]'  ⍝ what's this for ????
-      :AndIf (0⍴⊂'')≡Read 1  ⍝ no response to GetWindowLayout ????
+      :AndIf EmptyQueue'GetWindowLayout'  ⍝ no response to GetWindowLayout ????
       :AndIf Send'["CanSessionAcceptInput",{}]'
-      :AndIf (,⊂'CanAcceptInput')≡⊃¨Read 1
-      ⍝ TODO should arguably set ⎕PW to 32767  ⍝ Send '["SetPW",{"pw":79}]'
+      :AndIf (1 WaitFor)'CanAcceptInput'
+      :AndIf Send'["SetPW",{"pw":32767}]'
+      :AndIf EmptyQueue'SetPW'
       :AndIf 1('©°=⍓⍌⌾⍬',NL)(NO_WIN)(NO_ERROR)≡Execute'⎕UCS 1+⎕UCS''¨¯<⍒⍋⌽⍫'''  ⍝ try and execute APL
           LogInfo'Connection established'
       :Else
@@ -336,11 +337,22 @@
       :EndIf
     ∇
 
-    ∇ {timeout}EmptyQueue msg;messages
+    ∇ {ok}←{ignored}(json WaitFor)messages;read;timeout
+    ⍝ simple waiting of messages, without grabbing any result
+      :If 0=⎕NC'ignored' ⋄ ignored←'' ⋄ :EndIf
+      :If 0∊⍴ignored ⋄ ignored←0⍴⊂'' ⋄ :Else ⋄ ignored←,⊆,ignored ⋄ :EndIf
+      messages←,⊆,messages ⋄ read←0⍴⊂'' ⋄ timeout←0
+      :Repeat
+          timeout←TIMEOUT⌊timeout+10
+          read,←⊃¨⍣json⊢timeout Read json  ⍝ if json, just care about the message header
+      :Until ok←(∧/messages∊read)∧(0∊⍴read~messages∪ignored)
+    ∇
+
+    ∇ {ok}←{timeout}EmptyQueue msg;messages
     ⍝ empty message queue, expecting it to be empty
       :If 0=⎕NC'timeout' ⋄ timeout←0 ⋄ :EndIf  ⍝ do not wait for new messages
       messages←timeout Read 1
-      :If ~0∊⍴messages ⋄ msg LogInfo'Message queue not empty: ',⍕⊃¨messages ⋄ :EndIf
+      :If ~ok←0∊⍴messages ⋄ msg LogInfo'Message queue not empty: ',⍕⊃¨messages ⋄ :EndIf
     ∇
 
 
@@ -456,6 +468,7 @@
 
 
     ∇ (prompt output wins errors)←{wait}(fn WaitSub)waitmessages;done;messages;nothing;numwins;timeout;waitmessages;waitprompts;waitwins
+    ⍝ Process incoming messages until all wait conditions are fulfilled
       :If 0=⎕NC'wait' ⋄ :OrIf 0∊⍴wait ⋄ (waitprompts waitwins)←⍬ 0  ⍝ wait for nothing - first non-zero prompt or touched window
       :Else ⋄ (waitprompts waitwins)←wait  ⍝ wait for both conditions
       :EndIf
@@ -804,7 +817,7 @@
 
 
 
-    ∇ ok←_RunQA stop;BUG;_Reformat;dup;dup2;dupstops;dupwin;error;foo;foowin;goo;goowin;html;ok;ondisk;ondisk2;output;r;src;src1;src2;tmp;tmpdir;tmpfile;win;win2;∆
+    ∇ ok←_RunQA stop;BUG;_Reformat;dup;dup2;dupstops;dupwin;error;foo;foowin;goo;goowin;html;ok;ondisk;ondisk2;output;r;src;src1;src2;stops;tmp;tmpdir;tmpfile;win;win2;∆
       :Access Public
       ∆←stop{⍺←'' ⋄ ⍵≡1:⍵ ⋄ ⍺⍺:0⊣'QA'Error ⍺ ⋄ 0⊣'QA'LogWarn ⍺}
       ok←1
@@ -826,8 +839,6 @@
       src1←'    :Namespace   ' '∇   tradfn   ' '⎕ ← 1 2 3   ' '∇' 'VAR  ←   4 5  6  ' 'dfn  ←   {  ⍺ +  ⍵   }   ' '      :EndNamespace    '
       src2←':Namespace' '    ∇ tradfn' '      ⎕←1 2 3' '    ∇' '    VAR  ←   4 5  6' '    dfn  ←   {  ⍺ +  ⍵   }' ':EndNamespace'
       ok∧←'Reformat namespace'∆ src2≡Reformat src1
-     
-      ⍝ Edit/Fix
      
       dup←' res←dup arg' ' ⎕←''this is dup''' ' res←arg arg'
       foo←' res←foo arg' ' ⎕←''this is foo''' ' res←dup arg'
@@ -913,23 +924,27 @@
       ok∧←'Closed dup editor'∆('dup' 0 'Tracer'dup(0 1 2))('dup' 0 'Editor'dup ⍬)(,win)≡win.(title line type text stop)win2.(title line type text stop)WINS  ⍝ win2 is now close but we check that its fields were updated
       ok∧←'⎕STOP dup'∆ 1(,NL)(NO_WIN)(NO_ERROR)≡Execute'+⎕STOP ''dup'' '
      
-      ok∧←'TraceReturn dup[0]'∆ 1('')(,win)(NO_ERROR)≡1 1 TraceReturn win
+      ok∧←'TraceReturn dup[0]'∆ 1('')(,win)(NO_ERROR)≡1 1 TraceReturn win  ⍝ expect prompt to come back and window to be updated
       ok∧←'Tracing foo[0]'∆('foo' 0 'Tracer'foo(,1))(,win)≡win.(title line type text stop)WINS
      
-      :If 0  ⍝ mantis 18335: RestartThreads doesn't resume execution on linux
-          tmp←Resume  ⍝ resume execution of all threads - does NOT work
-      :Else
-          tmp←TraceResume win  ⍝ resume execution of current thread - DOES work
-      :EndIf
-     
-      ok∧←'Resume'∆ 1(' hello  hello ',NL)(,win)(NO_ERROR)≡tmp
-      ok∧←'Closed all windows'∆ WINS≡NO_WIN
+      ok∧←'TraceResume'∆ 1(' hello  hello ',NL)(,win)(NO_ERROR)≡1 win TraceResume win  ⍝ resume execution of current thread - expect tracer window to close and prompt to come back
+      ok∧←'No code running after TraceResume'∆ 1('1',NL)(NO_WIN)(NO_ERROR)≡Execute'(0∊⍴⎕SI)∧(0∊⍴⎕TNUMS~0)'
+      ok∧←'Closed all windows after TraceResume'∆ WINS≡NO_WIN
      
       ⍝ Trace/Stop/Monitors
      
       ok∧←'⎕TRACE'∆ 1(' 0 2  1 2 ',NL)(NO_WIN)(NO_ERROR)≡Execute'+(0 2) (1 2) ⎕TRACE¨ ''foo'' ''goo'''
       ok∧←'⎕MONITOR'∆ 1(' 0 2  1 ',NL)(NO_WIN)(NO_ERROR)≡Execute'+(0 2) 1 ⎕MONITOR¨ ''foo'' ''goo'''
-      ok∧←'ClearTraceStopMonitor'∆ 4 5 3≡ClearTraceStopMonitor
+      ok∧←'⎕STOP'∆ 1(' 1  2   ',NL)(NO_WIN)(NO_ERROR)≡Execute'+ ⎕STOP¨ ''foo'' ''goo'' ''dup'' '
+      stops←5 ⍝ BUG : interpreter thinks it has 5 stops whereas it has only 2
+      ok∧←'ClearTraceStopMonitor'∆ 4 stops 3≡ClearTraceStopMonitor
+     
+      ⍝ Trace again for a Resume
+      ok∧←'Tracing foo again'∆ 1('')(WINS)(NO_ERROR)≡1 1 Trace'foo ''world'' '  ⍝ expect a window and a prompt
+      ok∧←'Stepping over foo[1]'∆ 1('this is foo',NL)(,win)(NO_ERROR)≡TraceRun win←⊃WINS
+      ok∧←'Resume'∆ 1('this is dup',NL,' world  world ',NL)(,win)(NO_ERROR)≡Resume 1 1  ⍝ mantis 18335: RestartThreads doesn't resume execution on linux
+      ok∧←'No code running after Resume'∆ 1('1',NL)(NO_WIN)(NO_ERROR)≡Execute'(0∊⍴⎕SI)∧(0∊⍴⎕TNUMS~0)'
+      ok∧←'Closed all windows after Resume'∆ WINS≡NO_WIN
      
       ⍝ Dialog boxes
      
@@ -989,29 +1004,54 @@
       ok←(where New ⍬)._RunQA stop
     ∇
 
-    ∇ ok←_RunBug bug;errors;output;win;wins
+    ∇ ok←_RunBug1 bug;errors;output;win;wins;prompt
       :Access Public
       ok←1
-      (output wins errors)←Execute'+⎕FX ''foo'' ''⎕←1 2 3'' ''⎕←4 5 6'''
-      ok∧←output wins errors≡('foo',NL)(NO_WIN)(NO_ERROR)
-      :If ~2∊bug
-          (output wins errors)←Execute'+1 ⎕STOP ''foo'' '
-          ok∧←output wins errors≡('1',NL)(NO_WIN)(NO_ERROR)
-      :EndIf
-      ⍝ bug #2 : trace doesn't OpenWindow if there is no ⎕STOP point
-      (output wins errors)←Execute'foo'
-      ok∧←output wins errors≡(NL,'foo[1]',NL)(WINS)(ERROR_BREAK)
+      (prompt output wins errors)←Execute'+⎕FX ''foo'' ''⎕←1 2 3'' ''⎕←4 5 6'''
+      ok∧←prompt output wins errors≡1('foo',NL)(NO_WIN)(NO_ERROR)
+      (prompt output wins errors)←1 1 Trace'foo'  ⍝ wait for a window and a prompt
+      ok∧←prompt output wins errors≡1('')(WINS)(NO_ERROR)
       win←⊃wins
-      ⍝ bug #1 : RestartThreads doesn't work on linux
-      :If 1∊bug
-          (output wins errors)←Resume  ⍝ resume execution of all threads - does NOT work
-      :Else
-          (output wins errors)←TraceResume win  ⍝ resume execution of current thread - DOES work
+      (prompt output wins errors)←TraceRun win←⊃WINS
+      ok∧←prompt output wins errors≡1('1 2 3',NL)(,win)(NO_ERROR)
+      ⍝ BUG : RestartThreads doesn't work
+      :If bug ⋄ (prompt output wins errors)←Resume 1 1  ⍝ resume execution of all threads - does NOT work in some circumstances
+      :Else ⋄ (prompt output wins errors)←1 1 TraceResume win  ⍝ resume execution of current thread - DOES always work
       :EndIf
-      :If 2∊bug  ⍝ no stop point
-          ok∧←output wins errors≡('1 2 3',NL,'4 5 6',NL)(NO_WIN)(NO_ERROR)
-      :Else  ⍝ stop on foo[1]
-          ok∧←output wins errors≡(NL,'foo[1]',NL)(WINS)(ERROR_BREAK)
+      ok∧←prompt output wins errors≡1('4 5 6',NL)(,win)(NO_ERROR)
+    ∇
+
+    ∇ ok←_RunBug2 bug;ed;errors;foo;goo;output;prompt;tracer;wins
+    ⍝ the following behaviour may possibly require the bug Mantis 18308 NOT to be fixed (⎕STOP does not update opened windows)
+      :Access Public
+      ok←1
+      foo←' foo' ' ⎕←1 2 3' ' ⎕←4 5 6'
+      goo←' goo' ' foo'
+      (prompt output wins errors)←Execute'+⎕FX ',⍕Stringify¨foo
+      ok∧←prompt output wins errors≡1('foo',NL)(NO_WIN)(NO_ERROR)
+      (prompt output wins errors)←Execute'+⎕FX ',⍕Stringify¨goo
+      ok∧←prompt output wins errors≡1('goo',NL)(NO_WIN)(NO_ERROR)
+      ed←EditOpen'foo'
+      ok∧←WINS≡,ed
+      (prompt output wins errors)←Execute'+0 1 2 ⎕STOP ''foo'' '
+      ok∧←prompt output wins errors≡1('0 1 2',NL)(NO_WIN)(NO_ERROR)
+      (prompt output wins errors)←1 1 Trace'goo'
+      ok∧←prompt output wins errors≡1('')(,⊃⌽WINS)(NO_ERROR)  ⍝ foo has no more stops according to interpreter
+      tracer←⊃wins
+      (prompt output wins errors)←1 1 TraceResume tracer  ⍝ run foo which will stop at foo[1]
+      ok∧←prompt output wins errors≡1(NL,'foo[1]',NL)(tracer,⊃⌽WINS)(ERROR_BREAK)
+      ok∧←(2=≢WINS)∧(ed≡⊃WINS)∧(tracer≢⊃⌽WINS)
+      tracer←⊃⌽WINS
+      ok∧←tracer.stop≡0 1 2
+      ok∧←ed EditFix foo ⍬  ⍝ reset stops
+      CloseWindow ed
+      ok∧←WINS≡,tracer
+      (prompt output wins errors)←Execute'+⎕STOP ''foo'' '
+      ok∧←prompt output wins errors≡1('',NL)(NO_WIN)(NO_ERROR)  ⍝ foo has no more stops according to interpreter
+      (prompt output wins errors)←1 1 TraceResume tracer
+      ok∧←prompt output wins errors≡1('1 2 3',NL,'4 5 6',NL)(,tracer)(NO_ERROR)
+      :If bug  ⍝ BUG:  clears 3 stops (from foo), whereas the interpreter thinks foo has no stops
+          ok∧←0 0 0≡ClearTraceStopMonitor
       :EndIf
     ∇
 
