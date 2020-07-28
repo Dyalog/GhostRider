@@ -136,8 +136,8 @@
 
     ⎕IO←⎕ML←1
 
-    :Field Public INFO←1                    ⍝ set to 1 to log debug information
-    :Field Public TRACE←1                   ⍝ set to 1 to fully trace the RIDE protocol
+    :Field Public INFO←0                    ⍝ set to 1 to log debug information
+    :Field Public TRACE←0                   ⍝ set to 1 to fully trace the RIDE protocol
     :Field Public DEBUG←0                   ⍝ set to 1 to maximise the likelihood of finding a bug
 
     :Field Public TIMEOUT←200               ⍝ maximum Conga timeout in milliseconds for responses that don't require significant computation
@@ -395,7 +395,7 @@
       :For command arguments :In messages
           win←NO_WIN
           :Select command
-          :CaseList 'CanAcceptInput' 'FocusThread' 'EchoInput' 'UpdateDisplayName'  ⍝ these are ignored
+          :CaseList 'CanAcceptInput' 'FocusThread' 'EchoInput' 'UpdateDisplayName' 'StatusOutput' ⍝ these are ignored
           :Case 'SetPromptType'
               prompt←arguments.type
           :Case 'AppendSessionOutput'
@@ -685,7 +685,7 @@
       :ElseIf ~0∊⍴output ⋄ 'ED'Error'Produced unexpected output: ',⍕output
       :ElseIf 1≠≢wins ⋄ 'ED'Error'Did not produce 1 window'
       :ElseIf wins.type≢,⊂'Editor' ⋄ 'ED'Error'Did not produce an edit window'
-      :ElseIf wins.title≢,⊂name ⋄ 'ED'Error'Did not edit expected name'
+      :ElseIf wins.title≢,⊂{(⌽∧\⌽⍵≠'.')/⍵}name ⋄ 'ED'Error'Did not edit expected name'
       :EndIf ⋄ win←⊃wins
     ∇
 
@@ -706,7 +706,7 @@
       :ElseIf ''≢output ⋄ 'EditOpen'Error'Produced unexpected output: ',⍕output
       :ElseIf 1≠≢wins ⋄ 'EditOpen'Error'Failed to open 1 window'
       :ElseIf wins.type≡,⊂'Editor'
-          :If wins.title≢,⊂name ⋄ 'EditOpen'Error'Did not edit expected name' ⋄ :EndIf
+          :If wins.title≢,⊂{(⌽∧\⌽⍵≠'.')/⍵}name ⋄ 'EditOpen'Error'Did not edit expected name' ⋄ :EndIf
       :ElseIf ~(⊂wins.type)∊'Options' 'Task' ⋄ 'EditOpen'Error'Opened something else than an Options/Task window: ',(⊃wins).type
       :EndIf
       win←⊃wins
