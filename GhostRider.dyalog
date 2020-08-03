@@ -64,16 +64,21 @@
 ⍝ - value (String only): initial value of the text field
 ⍝ - default (String only): default value of the text field
 ⍝
-⍝ errors is a 3-element vector akin to ⎕DMX fields
+⍝ errors is a 4-element vector akin to ⎕DMX fields
 ⍝ - EN: error number (scalar integer)
+⍝ - ENX: extended error number (scalar integer)
 ⍝ - EM: error message (string)
 ⍝ - Message: detailed message (string)
 
 
 ⍝ Public API:
 ⍝
-⍝ The following functions execute code: they take a 2-element <wait> argument and return a 4-element <result>
-⍝ <result> ← {<wait>} Execute expr      ⍝ Execute an APL expression
+⍝ The following function execute simple APL code that must not pop-up windows (e.g. ⎕ED, 3500⌶) nor produce a non-standard prompt (⎕, ⍞, ∇-editor)
+⍝ It will ⎕SIGNAL any error.
+⍝ output ← APL expr                     ⍝ Execute a simple APL expression and get session output
+
+⍝ The following functions execute code: they take a 3-element <wait> argument and return a 4-element <result>
+⍝ <result> ← {<wait>} Execute expr      ⍝ Execute an arbitrary session expression
 ⍝ <result> ← {<wait>} Trace expr        ⍝ Start tracing an expression
 ⍝ <result> ← {<wait>} TraceRun win      ⍝ Run current line and move to next line (step over)
 ⍝ <result> ← {<wait>} TraceInto win     ⍝ Run current line and trace into callees (step into)
@@ -90,9 +95,10 @@
 ⍝ src←Reformat src                      ⍝ Reformat code
 ⍝ win←EditOpen name                     ⍝ Start editing a name (may create a new window or jump to an existing one)
 ⍝ res←win EditFix src {stops}           ⍝ Fix new source (and optional stops) in given window - may succeed, fail, or pop-up a dialog window
-⍝ win←{types}ED names                   ⍝ Cover for ⎕ED that returns the created windows
+⍝ win←{type}ED name                     ⍝ Cover for ⎕ED that returns the created windows
 ⍝ win SetStops stops                    ⍝ Change stop points (edit or trace window)
 ⍝ (traces stops monitors) ← ClearTraceStopMonitor   ⍝ Clear all races, stops, and monitors in the active workspace. The reply says how many of each thing were cleared.
+⍝ {type} Edit (name src {stops})        ⍝ Open a name with the editor, fix the new source, and close the window. Will force overwriting the file if the interpreter asks.
 ⍝
 ⍝ wins←Windows                          ⍝ List all open windows
 ⍝ CloseWindow win                       ⍝ Close a window
@@ -112,7 +118,10 @@
 
 
 
-    :Field Public Shared ReadOnly Version←'1.3.3'
+    :Field Public Shared ReadOnly Version←'1.3.4'
+    ⍝ v1.3.4 - Nic 2020
+    ⍝   - added APL method for simple APL evaluation (no prompt, no window)
+    ⍝   - added Edit method for simple Editor fixing (forcing save if dialog window appears)
     ⍝ v1.3.3 - Nic 2020
     ⍝   - changed default wait to (waitprompts waitwindows←(1 2 3 4) 0) because windows pop up before the prompt comes back
     ⍝ v1.3.2 - Nic 2020
@@ -166,7 +175,7 @@
 
 
     Resignal←⎕SIGNAL∘{⍵/⊂⎕DMX.(('EN'EN)('ENX' ENX)('EM'EM)('Message'Message))}
-    Signal←⎕SIGNAL∘{(en enx em msg)←⍵ ⋄ ('EN' en)('ENX' enx)('EM' em)('Message'msg)}
+    Signal←⎕SIGNAL∘{(en enx em msg)←⍵ ⋄ ⊂('EN' en)('ENX' enx)('EM' em)('Message'msg)}
 
     Error←{IsInteger ⍺: ((⍺+2)⊃⎕SI)∇⍵ ⋄ ((⍕⎕THIS),' ',⍺,' failed: ',⍕⍵)⎕SIGNAL ERRNO}
     Log←{⎕←(⍕⎕THIS),' ',⍺,': ',,⍕⍵ ⋄ 1:_←⍵}
@@ -510,7 +519,9 @@
       :Until done
       prompt←⊃⌽¯1,prompt~¯1  ⍝ only the last prompt set is interesting
       wins←∪wins  ⍝ window may get several messages e.g. UpdateWindow+SetHighlightLine
+      :If ~0∊⍴errors ⋄ errors←,⊂GetError ⋄ :EndIf
     ∇
+
 
 
     ∇ (prompt output wins errors)←Wait wait
@@ -571,6 +582,17 @@
       Send'["ContinueTrace",{"win":',(1 ⎕JSON win.id),'}]'
       result←wait('TraceReturn'WaitSub)⍬
     ∇
+
+    ∇ output←APL expr;errors;prompt;wins
+    ⍝ Execution of a simple APL expression and get session output
+      :Access Public
+      (prompt output wins errors)←1 0 Execute expr  ⍝ wait for prompt=1 and no window
+      :If prompt≢1 ⋄ 'APL'Error'Expression produced non-standard prompt: ',expr
+      :ElseIf wins≢NO_WIN ⋄ 'APL'Error'Expression produced a window: ',expr
+      :ElseIf errors≢NO_ERROR ⋄ Signal⊃errors
+      :EndIf
+    ∇
+
 
     ∇ num←fn VFI txt;ok
     ⍝ convert a single number
@@ -738,6 +760,30 @@
       :Else ⋄ res←⊃wins  ⍝ a wild dialog window appears
       :EndIf
       win.(text stop)←src stops
+    ∇
+
+
+    ∇ {type}Edit args;errors;name;ok;output;prompt;res;save;src;stops;win;wins
+    ⍝ {type} Edit (name src {stops})
+      :Access Public
+      (name src stops)←args,(≢args)↓''(0⍴⊂'')⍬
+      :If 0=⎕NC'type' ⋄ type←⊢ ⋄ :EndIf
+      win←type ED name
+      :If ~ok←1≡res←win EditFix src stops  ⍝ 1 is OK - 0 is failure to fix - namespace is a dialog box
+          save←('Fix as code in the workspace',(⎕UCS 10),'Create objects in the workspace, and update the file')
+          :If ok←9=⎕NC'res'  ⍝ dialog box
+              :If res.type≡'Task' ⋄ :AndIf (⊂save)∊res.options  ⍝ ask to overwrite file
+                  save Reply res  ⍝ say yes
+                  win.saved←⍬
+                  (prompt output wins errors)←Wait 1 win  ⍝ wait for save changes on the editor window
+                  ok←(1≡prompt)∧(''≡output)∧(0≡win.saved)∧(wins≡,win)∧(errors≡NO_ERROR)
+              :Else
+                  Reply res ⋄ ok←0  ⍝ cancel
+              :EndIf
+          :EndIf
+      :EndIf
+      CloseWindow win
+      :If ~ok ⋄ 'Edit'Error'Could not fix name ',name,' with source: ',⍕src ⋄ :EndIf
     ∇
 
     ∇ src←Reformat src;arguments;command;errors;messages;ns;ok;output;prompt;script;trad;type;win;wins
