@@ -118,7 +118,9 @@
 
 
 
-    :Field Public Shared ReadOnly Version←'1.3.4'
+    :Field Public Shared ReadOnly Version←'1.3.5'
+    ⍝ v1.3.5 - Nic 2020
+    ⍝   - added support for Edit to cope with TaskDialog (asking to load from file) before opening editor window
     ⍝ v1.3.4 - Nic 2020
     ⍝   - added APL method for simple APL evaluation (no prompt, no window)
     ⍝   - added Edit method for simple Editor fixing (forcing save if dialog window appears)
@@ -146,7 +148,7 @@
     ⎕IO←⎕ML←1
 
     :Field Public INFO←0                    ⍝ set to 1 to log debug information
-    :Field Public TRACE←0                   ⍝ set to 1 to fully trace the RIDE protocol
+    :Field Public TRACE←1                   ⍝ set to 1 to fully trace the RIDE protocol
     :Field Public DEBUG←0                   ⍝ set to 1 to maximise the likelihood of finding a bug
 
     :Field Public TIMEOUT←200               ⍝ maximum Conga timeout in milliseconds for responses that don't require significant computation
@@ -691,6 +693,7 @@
 
     ∇ win←{type}ED name;errors;expr;output;prompt;types;wins
     ⍝ Cover for ⎕ED to open one editor window, allowing to specify its type if name is undefined
+    ⍝ The window might be a TaskDialog asking whether we should read from file
       :Access Public
       :If 0=⎕NC'type' ⋄ type←''
       :ElseIf ~IsString name ⋄ 'ED'Error'Right argument must be a string'
@@ -701,14 +704,21 @@
       expr←type,'⎕ED',⍕Stringify name
       EmptyQueue'ED'
       Send'["Execute",{"text":',(1 ⎕JSON expr,LF),',"trace":false}]'
-      (prompt output wins errors)←('ED'WaitSub)⍬  ⍝ ⎕ED comes back to prompt
-      :If prompt≢1 ⋄ 'ED'Error'Produced unexpected prompt: ',⍕prompt
-      :ElseIf ~0∊⍴errors ⋄ 'ED'Error'Produced unexpected errors: ',⍕errors
+      (prompt output wins errors)←⍬ 1('ED'WaitSub)⍬
+      :If ~0∊⍴errors ⋄ 'ED'Error'Produced unexpected errors: ',⍕errors
       :ElseIf ~0∊⍴output ⋄ 'ED'Error'Produced unexpected output: ',⍕output
       :ElseIf 1≠≢wins ⋄ 'ED'Error'Did not produce 1 window'
-      :ElseIf wins.type≢,⊂'Editor' ⋄ 'ED'Error'Did not produce an edit window'
-      :ElseIf wins.title≢,⊂{(⌽∧\⌽⍵≠'.')/⍵}name ⋄ 'ED'Error'Did not edit expected name'
-      :EndIf ⋄ win←⊃wins
+      :ElseIf wins.type≡,⊂'Editor'
+          :If wins.title≢,⊂{(⌽∧\⌽⍵≠'.')/⍵}name ⋄ 'ED'Error'Did not edit expected name' ⋄ :EndIf
+          :If prompt≢1
+              :If (1 ''NO_WIN NO_ERROR)≡1 0('ED'WaitSub)⍬
+                  'ED'Error'Failed to come back to prompt'
+              :EndIf
+          :EndIf
+      :ElseIf ~(wins.type)∊'Options' 'Task' ⋄ 'ED'Error'Opened something else than an Options/Task window: ',(⊃wins).type
+      :ElseIf prompt≢0 ⋄ 'ED'Error'Produced unexpected prompt: ',⍕prompt
+      :EndIf
+      win←⊃wins
     ∇
 
     ∇ win←EditOpen name;errors;ok;output;prompt;wins
@@ -729,12 +739,12 @@
       :ElseIf 1≠≢wins ⋄ 'EditOpen'Error'Failed to open 1 window'
       :ElseIf wins.type≡,⊂'Editor'
           :If wins.title≢,⊂{(⌽∧\⌽⍵≠'.')/⍵}name ⋄ 'EditOpen'Error'Did not edit expected name' ⋄ :EndIf
-      :ElseIf ~(⊂wins.type)∊'Options' 'Task' ⋄ 'EditOpen'Error'Opened something else than an Options/Task window: ',(⊃wins).type
+      :ElseIf ~(wins.type)∊'Options' 'Task' ⋄ 'EditOpen'Error'Opened something else than an Options/Task window: ',(⊃wins).type
       :EndIf
       win←⊃wins
     ∇
 
-    ∇ res←win EditFix src;arguments;command;errors;messages;output;prompt;stops;wins
+    ∇ res←win EditFix src;arguments;command;errors;messages;output;prompt;stops;wins;stop
     ⍝ Fix source in a given edit window
     ⍝ result is boolean if fixing was completed (0 for OK, 1 for error)
     ⍝ otherwise it's an OptionsDialog popped up by the editor
@@ -743,37 +753,47 @@
           (src stops)←src
           :If ~IsStops stops ⋄ 'EditFix'Error'Stops must be numeric vector: ',⍕stops ⋄ :EndIf
           ⍝stops∩←0,⍳⍴src  ⍝ only legitimate line numbers
-      :Else ⋄ stops←win.stop
+      :Else ⋄ stops←win.stop  ⍝ stops←⎕NULL
       :EndIf
       :If ~IsSource src←,¨src ⋄ 'EditFix'Error'Source must be a string or a vector of strings: ',⍕src ⋄ :EndIf
       :If ~IsWin win ⋄ 'EditFix'Error'Left argument must be a window' ⋄ :EndIf
       win.saved←⍬
       EmptyQueue'EditFix'
-      Send'["SaveChanges",{"win":',(1 ⎕JSON win.id),',"text":',(1 ⎕JSON src),',"stop":',(1 ⎕JSON stops),'}]'
+      Send'["SaveChanges",{"win":',(1 ⎕JSON win.id),',"text":',(1 ⎕JSON src),',"stop":',(1 ⎕JSON stops),'}]'   ⍝ providing no stop is like explicitly setting stops to ⍬
       (prompt output wins errors)←⍬ 1('EditFix'WaitSub)⍬  ⍝ EditFix may not touch the prompt - wait for window to be touched
       :If ~prompt∊¯1 1 ⋄ 'EditFix'Error'Produced unexpected prompt: ',⍕prompt  ⍝ ⎕BUG ? Even though promptype was already 1, SaveChanges may trigger two SetPromptType(1) messages before the ReplySaveChanges, and may trigger one before an OptionsDialog
       :ElseIf NO_ERROR≢errors ⋄ 'EditFix'Error'Produced unexpected error: ',⍕errors
       :ElseIf ''≢output ⋄ 'EditFix'Error'Produced unexpected output: ',⍕output
       :ElseIf 1≠≢wins ⋄ 'EditFix'Error'Failed to fix 1 window'
       :ElseIf wins≡,⊂win ⋄ res←0≡win.saved  ⍝ fixed
-      :ElseIf ~(⊂(⊃wins).type)∊'Options' 'Task' ⋄ 'EditFix'Error'Opened something else than an Options/Task window: ',(⊃wins).type
+      :ElseIf ~(wins.type)∊'Options' 'Task' ⋄ 'EditFix'Error'Opened something else than an Options/Task window: ',(⊃wins).type
       :Else ⋄ res←⊃wins  ⍝ a wild dialog window appears
       :EndIf
       win.(text stop)←src stops
     ∇
 
 
-    ∇ {type}Edit args;errors;name;ok;output;prompt;res;save;src;stops;win;wins
+    ∇ {type}Edit args;errors;name;ok;opt;output;prompt;res;src;srcstops;stops;win;wins
     ⍝ {type} Edit (name src {stops})
       :Access Public
-      (name src stops)←args,(≢args)↓''(0⍴⊂'')⍬
+      args←,⊆,args
+      (name src stops)←args,(≢args)↓''(0⍴⊂'')⎕NULL
+      :If stops≡⎕NULL ⋄ srcstops←src ⋄ :Else ⋄ srcstops←src stops ⋄ :EndIf
       :If 0=⎕NC'type' ⋄ type←⊢ ⋄ :EndIf
       win←type ED name
-      :If ~ok←1≡res←win EditFix src stops  ⍝ 1 is OK - 0 is failure to fix - namespace is a dialog box
-          save←('Fix as code in the workspace',(⎕UCS 10),'Create objects in the workspace, and update the file')
+      opt←'Get the text from the modified file'
+      :If win.type≡'Task' ⋄ :AndIf (⊂opt)∊win.options
+          opt Reply win
+          (prompt output wins errors)←Wait 1 1  ⍝ prompt must come back to 1
+          :If (prompt output errors)≢1 ''NO_ERROR ⋄ 'Edit'Error'Failed to reply to TaskDialog' ⋄ :EndIf
+          win←⊃wins
+      :EndIf
+      :If win.type≢'Editor' ⋄ 'Edit'Error'Failed to open editor' ⋄ :EndIf
+      :If ~ok←1≡res←win EditFix srcstops  ⍝ 1 is OK - 0 is failure to fix - namespace is a dialog box
+          opt←('Fix as code in the workspace',(⎕UCS 10),'Create objects in the workspace, and update the file')
           :If ok←9=⎕NC'res'  ⍝ dialog box
-              :If res.type≡'Task' ⋄ :AndIf (⊂save)∊res.options  ⍝ ask to overwrite file
-                  save Reply res  ⍝ say yes
+              :If res.type≡'Task' ⋄ :AndIf (⊂opt)∊res.options  ⍝ ask to overwrite file
+                  opt Reply res  ⍝ say yes
                   win.saved←⍬
                   (prompt output wins errors)←Wait 1 win  ⍝ wait for save changes on the editor window
                   ok←(1≡prompt)∧(''≡output)∧(0≡win.saved)∧(wins≡,win)∧(errors≡NO_ERROR)
@@ -1115,6 +1135,39 @@
       :If bug  ⍝ Mantis 18372:  clears 3 stops (from foo), whereas the interpreter thinks foo has no stops
           ok∧←0 0 0≡ClearTraceStopMonitor
       :EndIf
+    ∇
+
+    ∇ ok←_RunBug3 file;class;classbad;ed;res
+      :Access Public
+      ok←1
+      class←':Class class' '∇ foo' '∇' ':EndClass'
+      classbad←(¯1↓class),⊂':EndNamespace'
+      ⍝ fix class and tie it to file
+      ok∧←('35',NL)≡APL'+ (⊂',(⍕Stringify¨class),') ⎕NPUT ',(Stringify file),' 1'
+      ok∧←(' class ',NL)≡APL'+ 2 ⎕FIX ',Stringify'file://',file
+      ⍝ now edit class and put classbad instead
+      ed←EditOpen'class'
+      res←ed EditFix classbad
+      ok∧←(9=⎕NC'res')∧('Task'≡res.type)∧('Save file content'≡res.text)∧('Fix as code in the workspace'≡28↑(res.index⍳100)⊃res.options)
+      100 Reply res
+      res←Wait ⍬ 1
+      ok∧←(res[1 2 4]≡¯1 ''NO_ERROR)∧(1=≢3⊃res)
+      res←⊃3⊃res
+      ok∧←(9=⎕NC'res')∧('Options'≡res.type)∧('Can''t Fix'≡res.text)
+      Reply res  ⍝ just close the error message
+      ed.saved←⍬
+      res←Wait ⍬ 1  ⍝ should ReplySaveChanges with error
+      ok∧←res≡¯1 ''(,ed)NO_ERROR
+      ok∧←ed.saved≡1  ⍝ fix failed (saved≠0)
+      CloseWindow ed
+      ok∧←(,(↑classbad),NL)≡APL' ↑⎕SRC class '
+      ok∧←(,(↑classbad),NL)≡APL'↑⊃⎕NGET ',(Stringify file),' 1'
+      ∘∘∘
+      
+      Edit'class' class  ⍝ put back original class
+      'link issue #143'assert'(,(↑class),NL)≡ride.APL'' ↑⎕SRC ',name,'.class '' '
+      'link issue #143'assert'class≡⊃⎕NGET(folder,''/class.aplc'')1'
+      Edit'class'class
     ∇
 
     ∇ instance←{where}New env
