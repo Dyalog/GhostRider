@@ -148,7 +148,7 @@
     ⎕IO←⎕ML←1
 
     :Field Public INFO←0                    ⍝ set to 1 to log debug information
-    :Field Public TRACE←1                   ⍝ set to 1 to fully trace the RIDE protocol
+    :Field Public TRACE←0                   ⍝ set to 1 to fully trace the RIDE protocol
     :Field Public DEBUG←0                   ⍝ set to 1 to maximise the likelihood of finding a bug
 
     :Field Public TIMEOUT←200               ⍝ maximum Conga timeout in milliseconds for responses that don't require significant computation
@@ -1163,8 +1163,8 @@
       ok∧←(,(↑classbad),NL)≡APL' ↑⎕SRC class '
       ok∧←(,(↑classbad),NL)≡APL'↑⊃⎕NGET ',(Stringify file),' 1'
       ∘∘∘
-      
-      Edit'class' class  ⍝ put back original class
+     
+      Edit'class'class  ⍝ put back original class
       'link issue #143'assert'(,(↑class),NL)≡ride.APL'' ↑⎕SRC ',name,'.class '' '
       'link issue #143'assert'class≡⊃⎕NGET(folder,''/class.aplc'')1'
       Edit'class'class
