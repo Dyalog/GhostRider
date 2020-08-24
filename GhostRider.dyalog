@@ -118,7 +118,9 @@
 
 
 
-    :Field Public Shared ReadOnly Version←'1.3.5'
+    :Field Public Shared ReadOnly Version←'1.3.6'
+    ⍝ v1.3.6 - Nic 2020
+    ⍝   - force Conga to load into GhostRider rather than in # so that Destructor is called on ⎕EX and the instance doesn't appear in 1400⌶⍬
     ⍝ v1.3.5 - Nic 2020
     ⍝   - added support for Edit to cope with TaskDialog (asking to load from file) before opening editor window
     ⍝ v1.3.4 - Nic 2020
@@ -206,7 +208,7 @@
       :If ⎕NULL∊DRC APLProcess
           Tool←⎕SE.SALT.Load'Tool'
           :If DRC≡⎕NULL
-              DRC←Tool.New'Conga'
+              DRC←Tool.New'Conga' '' ''(0 0 0)⎕THIS
               {}DRC.SetProp'' 'EventMode' 1
           :EndIf
           :If APLProcess≡⎕NULL
