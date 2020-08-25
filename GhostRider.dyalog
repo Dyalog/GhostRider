@@ -118,9 +118,11 @@
 
 
 
-    :Field Public Shared ReadOnly Version←'1.3.6'
+    :Field Public Shared ReadOnly Version←'1.3.7'
+    ⍝ v1.3.7 - Nic 2020
+    ⍝   - fixed the 1400⌶ issue that was preventing
     ⍝ v1.3.6 - Nic 2020
-    ⍝   - force Conga to load into GhostRider rather than in # so that Destructor is called on ⎕EX and the instance doesn't appear in 1400⌶⍬
+    ⍝   - force Conga to load into GhostRider class parent rather than in #
     ⍝ v1.3.5 - Nic 2020
     ⍝   - added support for Edit to cope with TaskDialog (asking to load from file) before opening editor window
     ⍝ v1.3.4 - Nic 2020
@@ -149,7 +151,7 @@
 
     ⎕IO←⎕ML←1
 
-    :Field Public INFO←0                    ⍝ set to 1 to log debug information
+    :Field Public INFO←1                    ⍝ set to 1 to log debug information
     :Field Public TRACE←0                   ⍝ set to 1 to fully trace the RIDE protocol
     :Field Public DEBUG←0                   ⍝ set to 1 to maximise the likelihood of finding a bug
 
@@ -163,11 +165,11 @@
     :Field Private Shared ReadOnly ERRNO←309        ⍝ error number signaled by this class
     :Field Private Shared ReadOnly CONGA_ERRNO←999  ⍝ error number signaled by Conga
     :Field Private BUFFER←0⍴⊂''                 ⍝ list of received chunks
-    :Field Private PROCESS←⎕NULL                ⍝ APLProcess to launch RIDE (if required)
-    :field Private CLIENT←⎕NULL                 ⍝ Conga connection
+    :Field Public PROCESS←⎕NULL                 ⍝ APLProcess to launch RIDE (if required)
+    :field Public CLIENT←⎕NULL                  ⍝ Conga connection
 
-    :Field Private Shared DRC←⎕NULL              ⍝ Conga namespace - loaded from conga workspace
-    :Field Private Shared APLProcess←⎕NULL       ⍝ APLProcess namespace - loaded from APLProcess.dyalog
+    :Field Public Shared MyDRC←⎕NULL            ⍝ Conga namespace - loaded from conga workspace - must not be called Conga nor DRC because we load Conga into this class and Tool.(New→Prepare→LoadConga) will test where.⎕NC'Conga' 'DRC'
+    :Field Public Shared APLProcess←⎕NULL       ⍝ APLProcess namespace - loaded from APLProcess.dyalog
 
     :Field Public Shared ReadOnly ERROR_OK←0 0 '' ''  ⍝ error←(EN ENX EM Message)
     :Field Public Shared ReadOnly ERROR_STOP←1001 0 '' ''  ⍝ error returned when hitting a breakpoint
@@ -202,27 +204,29 @@
     IsInteger←{(0=≡⍵)∧(0=≡⍵)∧(⍬≡0⍴⍵):⍵≡⌊⍵ ⋄ 0}
 
 
-    ∇ ok←LoadLibraries;Tool
+    ∇ ok←LoadLibraries;Tool;where
     ⍝ Failure to load library will cause ⎕SE.SALT.Load to error
       :Access Shared
-      :If ⎕NULL∊DRC APLProcess
+      :If MyDRC≡⎕NULL
           Tool←⎕SE.SALT.Load'Tool'
-          :If DRC≡⎕NULL
-              DRC←Tool.New'Conga' '' ''(0 0 0)⎕THIS
-              {}DRC.SetProp'' 'EventMode' 1
-          :EndIf
-          :If APLProcess≡⎕NULL
-              APLProcess←⎕SE.SALT.Load'APLProcess'
-          :EndIf
+          ⍝ where←#  ⍝ will prevent )clear if GhostRider resides in ⎕SE
+          ⍝ where←⎕THIS  ⍝ can't load here because refix produces a DLL ALREADY LOADED error
+          where←(⊃⊃⎕CLASS ⎕THIS)  ⍝ load in the GhostRider class
+          ⍝where←(⊃⊃⎕CLASS ⎕THIS).##  ⍝ use the parent of the class to avoid reinitialising DRC on refix
+          MyDRC←Tool.New'Conga' '' ''(0 0 0)where
+          {}MyDRC.SetProp'' 'EventMode' 1
+      :EndIf
+      :If APLProcess≡⎕NULL
+          APLProcess←⎕SE.SALT.Load'APLProcess -target=',⍕⊃⊃⎕CLASS ⎕THIS  ⍝ ensure we load it in the shared class and not in the instance
       :EndIf
     ∇
 
     ∇ port←GetTcpPort;addr;rc;srv
     ⍝ find a free TCP port by starting and closing a conga server (pretty heavy weight...)
       :Access Public
-      (rc srv)←DRC.Srv'' '127.0.0.1' 0 'Text'
+      (rc srv)←MyDRC.Srv'' '127.0.0.1' 0 'Text'
       :If rc≠0 ⋄ 'GetTcpPort'Error'Failed to start server' ⋄ :EndIf
-      (rc addr)←DRC.GetProp srv'LocalAddr'
+      (rc addr)←MyDRC.GetProp srv'LocalAddr'
       :If rc≠0 ⋄ 'GetTcpPort'Error'Failed to get local TCP/IP address' ⋄ :EndIf
       port←4⊃addr
       CloseConga srv
@@ -265,7 +269,7 @@
       :EndIf
       tm1←'SupportedProtocols=2' ⋄ tm2←'UsingProtocol=2'
       ⎕DF('@',host,':',⍕port){(¯1↓⍵),⍺,(¯1↑⍵)}⍕⎕THIS
-      :If 0≠⊃(_ CLIENT)←2↑r←DRC.Clt''host port'Text'((1+DEBUG)⊃BUFSIZE)
+      :If 0≠⊃(_ CLIENT)←2↑r←MyDRC.Clt''host port'Text'((1+DEBUG)⊃BUFSIZE)
           'Constructor'Error'Could not connect to server ',host,':',⍕port
       :ElseIf 1=≢('Constructor'WaitFor 0)tm1  ⍝ first message is not JSON
       :AndIf Send tm1
@@ -292,8 +296,8 @@
     ∇
 
     ∇ CloseConga obj
-      :Trap CONGA_ERRNO   ⍝ )clear can un-initialise Conga, making DRC.Close ⎕SIGNAL 999 instead of returning error code 1006 - ERR_ROOT_NOT_FOUND - Please re-initialise
-          {}DRC.Close obj
+      :Trap CONGA_ERRNO   ⍝ )clear can un-initialise Conga, making MyDRC.Close ⎕SIGNAL 999 instead of returning error code 1006 - ERR_ROOT_NOT_FOUND - Please re-initialise
+          {}MyDRC.Close obj
       :EndTrap
     ∇
 
@@ -319,7 +323,7 @@
     ⍝ Send a message to the RIDE
       :Access Public
       :If 0=⎕NC'error' ⋄ error←1 ⋄ :EndIf
-      ok←0=⊃r←DRC.Send CLIENT(AddHeader ToUtf8'Send'LogTrace msg)
+      ok←0=⊃r←MyDRC.Send CLIENT(AddHeader ToUtf8'Send'LogTrace msg)
       :If error∧~ok
           'Send'Error⍕r
           Terminate
@@ -331,7 +335,7 @@
       :Access Public
       :If 0=⎕NC'timeout' ⋄ timeout←TIMEOUT ⋄ :EndIf
       :Repeat
-          :If ok←0=⊃r←DRC.Wait CLIENT timeout
+          :If ok←0=⊃r←MyDRC.Wait CLIENT timeout
               :If r[3]∊'Block' 'BlockLast'   ⍝ we got some data
                   BUFFER,←⊂4⊃r
               :EndIf
@@ -1185,5 +1189,8 @@
       :If 0=⎕NC'where' ⋄ where←⊃⎕RSI ⋄ :EndIf
       instance←where.⎕NEW ⎕THIS arg
     ∇
+
+
+
 
 :EndClass
