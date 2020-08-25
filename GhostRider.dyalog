@@ -120,9 +120,9 @@
 
     :Field Public Shared ReadOnly Version←'1.3.7'
     ⍝ v1.3.7 - Nic 2020
-    ⍝   - fixed the 1400⌶ issue that was preventing
+    ⍝   - fixed the 1400⌶ issue that was preventing garbage collection
     ⍝ v1.3.6 - Nic 2020
-    ⍝   - force Conga to load into GhostRider class parent rather than in #
+    ⍝   - force Conga to load into GhostRider class parent rather than in # so that )clear works when GhostRider resides in ⎕SE
     ⍝ v1.3.5 - Nic 2020
     ⍝   - added support for Edit to cope with TaskDialog (asking to load from file) before opening editor window
     ⍝ v1.3.4 - Nic 2020
@@ -151,7 +151,7 @@
 
     ⎕IO←⎕ML←1
 
-    :Field Public INFO←1                    ⍝ set to 1 to log debug information
+    :Field Public INFO←0                    ⍝ set to 1 to log debug information
     :Field Public TRACE←0                   ⍝ set to 1 to fully trace the RIDE protocol
     :Field Public DEBUG←0                   ⍝ set to 1 to maximise the likelihood of finding a bug
 
@@ -168,7 +168,7 @@
     :Field Public PROCESS←⎕NULL                 ⍝ APLProcess to launch RIDE (if required)
     :field Public CLIENT←⎕NULL                  ⍝ Conga connection
 
-    :Field Public Shared MyDRC←⎕NULL            ⍝ Conga namespace - loaded from conga workspace - must not be called Conga nor DRC because we load Conga into this class and Tool.(New→Prepare→LoadConga) will test where.⎕NC'Conga' 'DRC'
+    :Field Public Shared MyDRC←⎕NULL            ⍝ Conga namespace - loaded from conga workspace - must not be called Conga nor DRC because we load Conga into this class and Tool.(New→Prepare→LoadConga) will test where.⎕NC'Conga' 'DRC' which return ¯2.2 if DRC is a Shared Field, even though it is unassigned.
     :Field Public Shared APLProcess←⎕NULL       ⍝ APLProcess namespace - loaded from APLProcess.dyalog
 
     :Field Public Shared ReadOnly ERROR_OK←0 0 '' ''  ⍝ error←(EN ENX EM Message)
