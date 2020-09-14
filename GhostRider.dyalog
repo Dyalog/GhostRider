@@ -5,8 +5,7 @@
 ⍝ and synchronously communicate through the RIDE protocol in order to control it.
 ⍝ This means that when the GhostRider expects a response from the interpreter
 ⍝ it will block the APL thread until it gets it.
-⍝ Dyalog v18.0 or later required.
-
+⍝ Dyalog v18.0 Unicode or later required.
 
 ⍝ To create a new APL process and connect to it
 ⍝    R←⎕NEW GhostRider {env}
@@ -287,7 +286,7 @@
       :AndIf EmptyQueue'GetWindowLayout'  ⍝ no response to GetWindowLayout ????
       :AndIf Send'["SetPW",{"pw":32767}]'
       :AndIf EmptyQueue'SetPW'
-      :AndIf 1('©°=⍓⍌⌾⍬',NL)(NO_WIN)(NO_ERROR)≡Execute'⎕UCS 1+⎕UCS''¨¯<⍒⍋⌽⍫'''  ⍝ try and execute APL
+      ⍝:AndIf 1('⍫⌽⍋⍒<¯¨',NL)(NO_WIN)(NO_ERROR)≡Execute'⌽''¨¯<⍒⍋⍉⍫'''  ⍝ try and execute APL
           LogInfo'Connection established'
       :Else
           Terminate
