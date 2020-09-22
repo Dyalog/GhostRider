@@ -910,7 +910,7 @@
       ok∧←'Execute meaning of life'∆ 1('42',NL)(NO_WIN)(NO_ERROR)≡Execute'⍎⊖⍕⊃⊂|⌊-*+○⌈×÷!⌽⍉⌹~⍴⍋⍒,⍟?⍳0'
       output←∊'DOMAIN ERROR: Divide by zero' '      ÷0' '      ∧',¨NL
       error←11 1 'DOMAIN ERROR' 'Divide by zero'
-      ok∧←'Execute ÷0'∆ 1(output)(NO_WIN)(,⊂(2↑error),'' '')≡Execute'÷0'
+      ok∧←'Execute ÷0'∆ 1(output)(NO_WIN)(,⊂error)≡Execute'÷0'
       ok∧←error≡GetError
      
       ⍝ Reformat
