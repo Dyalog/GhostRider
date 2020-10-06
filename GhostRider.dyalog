@@ -751,7 +751,7 @@
 
     ∇ res←win EditFix src;arguments;command;errors;messages;output;prompt;stops;wins;stop
     ⍝ Fix source in a given edit window
-    ⍝ result is boolean if fixing was completed (0 for OK, 1 for error)
+    ⍝ result is boolean if fixing was completed (1 for OK, 0 for error)
     ⍝ otherwise it's an OptionsDialog popped up by the editor
       :Access Public
       :If 3=|≡src←,⊆,src  ⍝ right argument may be (src stops)
