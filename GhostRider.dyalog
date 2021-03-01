@@ -117,7 +117,10 @@
 
 
 
-    :Field Public Shared ReadOnly Version←'1.3.7'
+    :Field Public Shared ReadOnly Version←'1.3.8'
+    ⍝ v1.3.8 - Nic 2021
+    ⍝   - Added MULTITHREADING flag to ignore spurious SetPrompt(1) from threads displaying stuff
+    ⍝   - Added Output function to get pending output
     ⍝ v1.3.7 - Nic 2020
     ⍝   - fixed the 1400⌶ issue that was preventing garbage collection
     ⍝ v1.3.6 - Nic 2020
@@ -153,6 +156,7 @@
     :Field Public INFO←0                    ⍝ set to 1 to log debug information
     :Field Public TRACE←0                   ⍝ set to 1 to fully trace the RIDE protocol
     :Field Public DEBUG←0                   ⍝ set to 1 to maximise the likelihood of finding a bug
+    :Field Public MULTITHREADING←0          ⍝ allow other threads to spuriously SetPrompt(1)
 
     :Field Public TIMEOUT←200               ⍝ maximum Conga timeout in milliseconds for responses that don't require significant computation
     :Field Public BUFSIZE←2*15 4            ⍝ Conga buffer size for DEBUG=0 and DEBUG=1 - use small value for harsh QA that may miss messages
@@ -197,10 +201,11 @@
 
     IsStops←{(1≡≢⍴⍵)∧(1≡≡⍵)∧(⍬≡0⍴⍵)}
     IsPrompts←{1≡∧/⍵∊(~⍺)↓¯1 0 1 2 3 4 5}  ⍝ ⍺←1 to allow ¯1 (prompt unset)
+    PromptIs←{⍺∊⍵,MULTITHREADING/1}
     IsSource←{(1≡≢⍴⍵)∧(2≡≡⍵)∧(∧/''∘≡¨0⍴¨⍵)}
     IsWin←{⍵∊WINS}
     IsString←{(1≡≢⍴⍵)∧(1≡≡⍵)∧(''≡0⍴⍵)}
-    IsInteger←{(0=≡⍵)∧(0=≡⍵)∧(⍬≡0⍴⍵):⍵≡⌊⍵ ⋄ 0}
+    IsInteger←{(0=≡⍵)∧(⍬≡0⍴⍵):⍵≡⌊⍵ ⋄ 0}
 
 
     ∇ ok←LoadLibraries;Tool;where
@@ -550,7 +555,7 @@
       :If ~IsString expr←,expr ⋄ 'Execute'Error'Expression must be a string' ⋄ :EndIf
       EmptyQueue'Execute'
       Send'["Execute",{"text":',(1 ⎕JSON expr,LF),',"trace":0}]'  ⍝ DOC error : trace is 0|1 not true|false
-      result←wait('Execute'WaitSub)⍬
+      result←wait('Execute'WaitSub)'EchoInput'
     ∇
     ∇ result←{wait}Trace expr;wins
     ⍝ Trace into an APL expression.
@@ -559,7 +564,7 @@
       :If ~IsString expr←,expr ⋄ 'Trace'Error'Expression must be a string' ⋄ :EndIf
       EmptyQueue'Trace'
       Send'["Execute",{"text":',(1 ⎕JSON expr,LF),',"trace":1}]'  ⍝ DOC error : trace is 0|1 not true|false
-      result←wait('Trace'WaitSub)⍬
+      result←wait('Trace'WaitSub)'EchoInput'
     ∇
     ∇ result←{wait}TraceRun win
     ⍝ Run current line and move to next (step over)
@@ -594,12 +599,20 @@
     ⍝ Execution of a simple APL expression and get session output
       :Access Public
       (prompt output wins errors)←1 0 Execute expr  ⍝ wait for prompt=1 and no window
-      :If prompt≢1 ⋄ 'APL'Error'Expression produced non-standard prompt: ',expr
+      :If ~prompt PromptIs 1 ⋄ 'APL'Error'Expression produced non-standard prompt: ',expr
       :ElseIf wins≢NO_WIN ⋄ 'APL'Error'Expression produced a window: ',expr
       :ElseIf errors≢NO_ERROR ⋄ Signal⊃errors
       :EndIf
     ∇
-
+    ∇ output←Output;errors;prompt;wins
+    ⍝ Read pending output to session - no wait
+      :Access Public
+      (prompt output wins errors)←'Output'ProcessMessages 0 Read 1
+      :If ~prompt PromptIs ¯1 ⋄ 'Output'Error'Interpreter changed prompt'
+      :ElseIf wins≢NO_WIN ⋄ 'Output'Error'Interpreter produced a window'
+      :ElseIf errors≢NO_ERROR ⋄ Signal⊃errors
+      :EndIf
+    ∇
 
     ∇ num←fn VFI txt;ok
     ⍝ convert a single number
@@ -655,12 +668,13 @@
           Send message←'["CloseWindow",{"win":',(1 ⎕JSON win.id),'}]'
           :Repeat
               (prompt output wins errors)←⍬ win('CloseWindow'WaitSub)('CloseWindow')('WindowTypeChanged' 'SetHighlightLine')  ⍝ turning editor into tracer requires two messages : WindowTypeChanged, SetHighlightLine
-              ok←(prompt≡¯1)∧(output≡'')∧(errors≡NO_ERROR)∧(wins≡,⊂win)
+              ok←(prompt PromptIs ¯1)∧(output≡'')∧(errors≡NO_ERROR)∧(wins≡,⊂win)
               :If ok∧(~IsWin win) ⋄ done←1 ⍝ actually closed the window
               :ElseIf ok∧(IsWin win) ⋄ :AndIf 'Tracer'≡win.type ⋄ done←1  ⍝ edit turned back into a tracer
-              :Else ⋄ done←0 ⍝ 'CloseWindow'Error'Failed to close window ',⍕win.id
+              :Else ⋄ done←win∊wins ⍝
               :EndIf
           :Until done
+          :If ~ok ⋄ 'CloseWindow'Error'Failed to close window ',⍕win.id ⋄ :EndIf
       :CaseList 'Options' 'Task' 'String'
           Reply win
       :CaseList 'Notification' 'Html'
@@ -683,7 +697,7 @@
       :If 0∊⍴toclose ⋄ TIMEOUT EmptyQueue'CloseAllWindows' ⋄ :Return ⋄ :EndIf  ⍝ ensure no response
       ⍝:While ~0∊⍴toclose
       (prompt output wins errors)←⍬ toclose('CloseAllWindows'WaitSub)⍬
-      :If ~prompt∊¯1 1 ⋄ 'CloseAllWindows'Error'Produced unexpected prompt: ',⍕prompt
+      :If ~prompt PromptIs ¯1 1 ⋄ 'CloseAllWindows'Error'Produced unexpected prompt: ',⍕prompt
       :ElseIf errors≢NO_ERROR ⋄ 'CloseAllWindows'Error'Produced unexpected errors: ',⍕errors
       :ElseIf output≢'' ⋄ 'CloseAllWindows'Error'Produced unexpected output: ',⍕output
       :ElseIf {1∨.≠(+/⍵),(+⌿⍵)}toclose∘.≡wins ⋄ 'CloseAllWindows'Error'Did not produce close all windows'
@@ -715,13 +729,9 @@
       :ElseIf 1≠≢wins ⋄ 'ED'Error'Did not produce 1 window'
       :ElseIf wins.type≡,⊂'Editor'
           :If wins.title≢,⊂{(⌽∧\⌽⍵≠'.')/⍵}name ⋄ 'ED'Error'Did not edit expected name' ⋄ :EndIf
-          :If prompt≢1
-              :If (1 ''NO_WIN NO_ERROR)≡1 0('ED'WaitSub)⍬
-                  'ED'Error'Failed to come back to prompt'
-              :EndIf
-          :EndIf
+          :If ~prompt PromptIs 1 ⋄ :AndIf (1 ''NO_WIN NO_ERROR)≡1 0('ED'WaitSub)⍬ ⋄ 'ED'Error'Failed to come back to prompt' ⋄ :EndIf
       :ElseIf ~(wins.type)∊'Options' 'Task' ⋄ 'ED'Error'Opened something else than an Options/Task window: ',(⊃wins).type
-      :ElseIf prompt≢0 ⋄ 'ED'Error'Produced unexpected prompt: ',⍕prompt
+      :ElseIf ~prompt PromptIs 0 ⋄ 'ED'Error'Produced unexpected prompt: ',⍕prompt
       :EndIf
       win←⊃wins
     ∇
@@ -738,7 +748,7 @@
       EmptyQueue'EditOpen'
       Send'["Edit",{"win":0,"text":',(1 ⎕JSON name),',"pos":1,"unsaved":{}}]'  ⍝ ⎕BUG doesn't work if unsaved not specified ? ⎕DOC : win must be 0 to create a new window
       (prompt output wins errors)←⍬ 1('EditOpen'WaitSub)⍬  ⍝ Edit does not touch the prompt - wait for window to pop up
-      :If prompt≢¯1 ⋄ 'EditOpen'Error'Produced unexpected prompt: ',⍕prompt
+      :If ~prompt PromptIs ¯1 ⋄ 'EditOpen'Error'Produced unexpected prompt: ',⍕prompt
       :ElseIf NO_ERROR≢errors ⋄ 'EditOpen'Error'Produced unexpected error: ',⍕errors
       :ElseIf ''≢output ⋄ 'EditOpen'Error'Produced unexpected output: ',⍕output
       :ElseIf 1≠≢wins ⋄ 'EditOpen'Error'Failed to open 1 window'
@@ -766,7 +776,7 @@
       EmptyQueue'EditFix'
       Send'["SaveChanges",{"win":',(1 ⎕JSON win.id),',"text":',(1 ⎕JSON src),',"stop":',(1 ⎕JSON stops),'}]'   ⍝ providing no stop is like explicitly setting stops to ⍬
       (prompt output wins errors)←⍬ 1('EditFix'WaitSub)⍬  ⍝ EditFix may not touch the prompt - wait for window to be touched
-      :If ~prompt∊¯1 1 ⋄ 'EditFix'Error'Produced unexpected prompt: ',⍕prompt  ⍝ ⎕BUG ? Even though promptype was already 1, SaveChanges may trigger two SetPromptType(1) messages before the ReplySaveChanges, and may trigger one before an OptionsDialog
+      :If ~prompt PromptIs ¯1 1 ⋄ 'EditFix'Error'Produced unexpected prompt: ',⍕prompt  ⍝ ⎕BUG ? Even though promptype was already 1, SaveChanges may trigger two SetPromptType(1) messages before the ReplySaveChanges, and may trigger one before an OptionsDialog
       :ElseIf NO_ERROR≢errors ⋄ 'EditFix'Error'Produced unexpected error: ',⍕errors
       :ElseIf ''≢output ⋄ 'EditFix'Error'Produced unexpected output: ',⍕output
       :ElseIf 1≠≢wins ⋄ 'EditFix'Error'Failed to fix 1 window'
@@ -790,7 +800,7 @@
       :If win.type≡'Task' ⋄ :AndIf (⊂opt)∊win.options
           opt Reply win
           (prompt output wins errors)←Wait 1 1  ⍝ prompt must come back to 1
-          :If (prompt output errors)≢1 ''NO_ERROR ⋄ 'Edit'Error'Failed to reply to TaskDialog' ⋄ :EndIf
+          :If ~prompt PromptIs 1 ⋄ :AndIf (output errors)≢''NO_ERROR ⋄ 'Edit'Error'Failed to reply to TaskDialog' ⋄ :EndIf
           win←⊃wins
       :EndIf
       :If win.type≢'Editor' ⋄ 'Edit'Error'Failed to open editor' ⋄ :EndIf
@@ -801,7 +811,7 @@
                   opt Reply res  ⍝ say yes
                   win.saved←⍬
                   (prompt output wins errors)←Wait 1 win  ⍝ wait for save changes on the editor window
-                  ok←(1≡prompt)∧(''≡output)∧(0≡win.saved)∧(wins≡,win)∧(errors≡NO_ERROR)
+                  ok←(prompt∊0 1)∧(''≡output)∧(0≡win.saved)∧(wins≡,win)∧(errors≡NO_ERROR)
               :Else
                   Reply res ⋄ ok←0  ⍝ cancel
               :EndIf
@@ -826,7 +836,7 @@
           win←⊃win ⋄ win.saved←⍬ ⋄ EmptyQueue'Reformat'
           Send'["FormatCode",{"win":',(1 ⎕JSON win.id),',"text":',(1 ⎕JSON src),'}]'
           (prompt output wins errors)←⍬ 1('Reformat'WaitSub)⍬
-          :If prompt≢¯1 ⋄ 'Reformat'Error'Produced unexpected prompt: ',⍕prompt
+          :If ~prompt∊¯1 0 1 ⋄ 'Reformat'Error'Produced unexpected prompt: ',⍕prompt
           :ElseIf NO_ERROR≢errors ⋄ 'Reformat'Error'Produced unexpected error: ',⍕errors
           :ElseIf ''≢output ⋄ 'Reformat'Error'Produced unexpected output: ',⍕output
           :ElseIf 1≠≢wins ⋄ 'Reformat'Error'Failed to open 1 window'
@@ -849,7 +859,7 @@
     ∇ fn _TraceChangedLine win;errors;ok;output;prompt;wins
     ⍝ Wait for tracer to change its line - will wait forever if it doesn't happen
       (prompt output wins errors)←⍬ win(fn WaitSub)'SetHighlightLine'
-      ok←(prompt≡¯1)∧(output≡'')∧(errors≡NO_ERROR)∧(wins≡,⊂win)
+      ok←(prompt∊¯1 0 1)∧(output≡'')∧(errors≡NO_ERROR)∧(wins≡,⊂win)
       ok∧←(IsWin win)∧('Tracer'≡win.type)  ⍝ edit turned back into a tracer
       :If ~ok ⋄ fn Error'Failed to changed Tracer line' ⋄ :EndIf
     ∇
