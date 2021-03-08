@@ -322,6 +322,9 @@
       PROCESS←⎕NULL
     ∇
 
+    ∇ terminated←Terminated
+      terminated←CLIENT≡⎕NULL
+    ∇
 
     ∇ {ok}←{error}Send msg;r
     ⍝ Send a message to the RIDE
@@ -377,7 +380,7 @@
           :If ~0∊⍴commands~awaited∪ignored ⍝ unexpected messages
               fn Error'Received unexpected messages: ',⍕commands~awaited∪ignored
           :EndIf
-      :Until ∧/awaited∊commands
+      :Until Terminated∨(∧/awaited∊commands)
     ∇
 
     ∇ {ok}←{timeout}EmptyQueue msg;messages
@@ -528,7 +531,7 @@
               done∧←(0∊⍴waitprompts)∨(∨/prompt∊waitprompts)
           :EndIf
           done∧←(0∊⍴waitmessages)∨(∨/∧/¨waitmessages∊¨⊂⊃¨messages)
-      :Until done
+      :Until Terminated∨done
       prompt←⊃⌽¯1,prompt~¯1  ⍝ only the last prompt set is interesting
       wins←∪wins  ⍝ window may get several messages e.g. UpdateWindow+SetHighlightLine
       :If ~0∊⍴errors ⋄ errors←,⊂GetError ⋄ :EndIf
@@ -673,7 +676,7 @@
               :ElseIf ok∧(IsWin win) ⋄ :AndIf 'Tracer'≡win.type ⋄ done←1  ⍝ edit turned back into a tracer
               :Else ⋄ done←win∊wins ⍝
               :EndIf
-          :Until done
+          :Until Terminated∨done
           :If ~ok ⋄ 'CloseWindow'Error'Failed to close window ',⍕win.id ⋄ :EndIf
       :CaseList 'Options' 'Task' 'String'
           Reply win
