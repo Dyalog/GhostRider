@@ -117,7 +117,9 @@
 
 
 
-    :Field Public Shared ReadOnly Version←'1.3.10'
+    :Field Public Shared ReadOnly Version←'1.3.11'
+    ⍝ v1.3.11 - Nic 2021
+    ⍝   - force reading the whole buffer on TCP error
     ⍝ v1.3.10 - Nic 2021
     ⍝   - changed editor task question in v18.1
     ⍝ v1.3.9 - Nic 2021
@@ -343,7 +345,7 @@
       :EndIf
     ∇
 
-    ∇ messages←{timeout}Read json;buffer;done;len;ok;r;start
+    ∇ messages←{timeout}Read json;buffer;bufok;done;len;ok;r;start
     ⍝ Read message queue from the RIDE
       :Access Public
       :If 0=⎕NC'timeout' ⋄ timeout←TIMEOUT ⋄ :EndIf
@@ -358,18 +360,16 @@
           :EndIf
       :Until done
       messages←0⍴⊂''
-      :If ok
-          buffer←∊BUFFER
-          :While (len←GetLength buffer)≤≢buffer
-              :If ok∧←('RIDE'≡4↓8↑buffer)∧(8<len)
-                  messages,←⊂0 ⎕JSON⍣json⊢'Receive'LogTrace FromUtf8 8↓len↑buffer
-                  buffer←len↓buffer
-              :EndIf
-          :EndWhile
-          :If ok ⋄ BUFFER←,⊂buffer
-          :Else ⋄ BUFFER←0⍴⊂'' ⋄ 'Read'Error'Invalid buffer: ',buffer
-          :EndIf
-      :Else
+      buffer←∊BUFFER ⋄ bufok←1
+      :While (len←GetLength buffer)≤≢buffer
+      :AndIf bufok∧←('RIDE'≡4↓8↑buffer)∧(8<len)
+          messages,←⊂0 ⎕JSON⍣json⊢'Receive'LogTrace FromUtf8 8↓len↑buffer
+          buffer←len↓buffer
+      :EndWhile
+      :If bufok ⋄ BUFFER←,⊂buffer
+      :Else ⋄ BUFFER←0⍴⊂'' ⋄ 'Read'Error'Invalid buffer: ',buffer
+      :EndIf
+      :If ~ok∧bufok
           'Read'LogWarn'Connection failed: ',⍕r
           Terminate  ⍝ consider connection dead for good (avoid trying to read more)
       :EndIf
@@ -493,7 +493,7 @@
               LogInfo'SysError: ',⍕arguments.(text stack)
               Terminate
               done←1
-              fn Error'Interpreter system error'
+              fn Error'Interpreter system error',arguments.(text,': ',stack)
           :Case 'Disconnect'
               LogInfo'Disconnected: ',arguments.message
               Terminate
