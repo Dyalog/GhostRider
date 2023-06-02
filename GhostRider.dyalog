@@ -244,6 +244,23 @@
       port←4⊃addr
       CloseConga srv
     ∇
+    
+    ∇ok←NegotiateProtocol protocol;tm1;tm2
+    ⍝ Requires the instance to be connected.
+    :Access Public
+    tm1←'SupportedProtocols=',⍕protocol ⋄ tm2←'UsingProtocol=',⍕protocol
+    :if 1=≢('Negotiate'WaitFor 0)tm1  ⍝ first message is not JSON
+    :Andif Send tm1
+    :AndIf 1=≢('Negotiate'WaitFor 0)tm2  ⍝ second message is not JSON
+    :AndIf Send tm2
+    ok←1
+    :else 
+      ok←0
+    :endif
+    
+
+    ∇
+    
 
     ∇ Constructor0
       :Access Public
@@ -251,7 +268,7 @@
       Constructor ⍬
     ∇
 
-    ∇ Constructor args;RIDE_INIT;_;env;host;port;r;runtime;tm1;tm2
+    ∇ Constructor args;RIDE_INIT;_;env;host;port;r;runtime
       :Access Public
       :Implements Constructor
       ⎕RL←⍬ 1  ⍝ for ED and _RunQA
@@ -284,10 +301,7 @@
       ⎕DF('@',host,':',⍕port){(¯1↓⍵),⍺,(¯1↑⍵)}⍕⎕THIS
       :If 0≠⊃(_ CLIENT)←2↑r←MyDRC.Clt''host port'BlkText' BUFSIZE ('Magic'  (MyDRC.Magic 'RIDE'))
           'Constructor'Error'Could not connect to server ',host,':',⍕port
-      :ElseIf 1=≢('Constructor'WaitFor 0)tm1  ⍝ first message is not JSON
-      :AndIf Send tm1
-      :AndIf 1=≢('Constructor'WaitFor 0)tm2  ⍝ second message is not JSON
-      :AndIf Send tm2
+      :ElseIf NegotiateProtocol 2
       :AndIf EmptyQueue'Identify'
       ⍝ from this point on, Windows interpreter may or may not send zero or more FocusThread or SetPromptType at different points in time
       :AndIf Send'["Identify",{"identity":1}]'
