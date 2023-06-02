@@ -1,5 +1,4 @@
 ﻿:Class GhostRider
-
 ⍝ Headless RIDE client for QA and automation.
 ⍝ This class will connect to an APL process (or create a new one)
 ⍝ and synchronously communicate through the RIDE protocol in order to control it.
@@ -117,7 +116,9 @@
 
 
 
-    :Field Public Shared ReadOnly Version←'1.3.11'
+    :Field Public Shared ReadOnly Version←'1.3.12'
+    ⍝ v1.3.12 - bhc 2023
+    ⍝   - Changing communication to BlkText mode
     ⍝ v1.3.11 - Nic 2021
     ⍝   - force reading the whole buffer on TCP error
     ⍝ v1.3.10 - Nic 2021
@@ -167,7 +168,7 @@
     :Field Public MULTITHREADING←IS181      ⍝ allow other threads to spuriously SetPrompt(1) - seems unavoidable since Dyalog v18.1
 
     :Field Public TIMEOUT←200               ⍝ maximum Conga timeout in milliseconds for responses that don't require significant computation
-    :Field Public BUFSIZE←2*15 4            ⍝ Conga buffer size for DEBUG=0 and DEBUG=1 - use small value for harsh QA that may miss messages
+    :Field Public BUFSIZE←2*21              ⍝ Conga buffer size. If you get an error 1135 during Negotiation increase the buffer size to allow space for Session in one block.
 
     :Field Private Shared ReadOnly LF←⎕UCS 10
     :Field Private Shared ReadOnly CR←⎕UCS 13
@@ -281,7 +282,7 @@
       :EndIf
       tm1←'SupportedProtocols=2' ⋄ tm2←'UsingProtocol=2'
       ⎕DF('@',host,':',⍕port){(¯1↓⍵),⍺,(¯1↑⍵)}⍕⎕THIS
-      :If 0≠⊃(_ CLIENT)←2↑r←MyDRC.Clt''host port'Text'((1+DEBUG)⊃BUFSIZE)
+      :If 0≠⊃(_ CLIENT)←2↑r←MyDRC.Clt''host port'BlkText' BUFSIZE ('Magic'  (MyDRC.Magic 'RIDE'))
           'Constructor'Error'Could not connect to server ',host,':',⍕port
       :ElseIf 1=≢('Constructor'WaitFor 0)tm1  ⍝ first message is not JSON
       :AndIf Send tm1
@@ -304,6 +305,7 @@
       :Else
           Terminate
           'Constructor'Error'RIDE handshake failed'
+          ⍝ Error 1135 => increase BUFSIZE to make room for session from the interpreter
       :EndIf
     ∇
 
@@ -338,38 +340,40 @@
     ⍝ Send a message to the RIDE
       :Access Public
       :If 0=⎕NC'error' ⋄ error←1 ⋄ :EndIf
-      ok←0=⊃r←MyDRC.Send CLIENT(AddHeader ToUtf8'Send'LogTrace msg)
+      ok←0=⊃r←MyDRC.Send CLIENT( ToUtf8'Send'LogTrace msg)
       :If error∧~ok
           'Send'Error⍕r
           Terminate
       :EndIf
     ∇
 
-    ∇ messages←{timeout}Read json;buffer;bufok;done;len;ok;r;start
+    ∇ messages←{timeout}Read json;ok;r;err;obj;evt;dat;done
     ⍝ Read message queue from the RIDE
       :Access Public
-      :If 0=⎕NC'timeout' ⋄ timeout←TIMEOUT ⋄ :EndIf
-      :Repeat
-          :If ok←0=⊃r←MyDRC.Wait CLIENT timeout
-              :If r[3]∊'Block' 'BlockLast'   ⍝ we got some data
-                  BUFFER,←⊂4⊃r
-              :EndIf
-              done←r[3]∊'BlockLast' 'Closed' 'Timeout'  ⍝ only a timeout is normal behaviour because RIDE connection is never closed in normal operation
-              ok←~r[3]∊'BlockLast' 'Closed'  ⍝ interpreter closed connection (should not happen)
-          :Else ⋄ done←1 ⍝ ok←0
-          :EndIf
-      :Until done
+      :If 0=⎕NC'timeout' ⋄ timeout←TIMEOUT ⋄ :EndIf  
       messages←0⍴⊂''
-      buffer←∊BUFFER ⋄ bufok←1
-      :While (len←GetLength buffer)≤≢buffer
-      :AndIf bufok∧←('RIDE'≡4↓8↑buffer)∧(8<len)
-          messages,←⊂0 ⎕JSON⍣json⊢'Receive'LogTrace FromUtf8 8↓len↑buffer
-          buffer←len↓buffer
-      :EndWhile
-      :If bufok ⋄ BUFFER←,⊂buffer
-      :Else ⋄ BUFFER←0⍴⊂'' ⋄ 'Read'Error'Invalid buffer: ',buffer
-      :EndIf
-      :If ~ok∧bufok
+      done←0
+      :repeat
+      :If ok←0=⊃r←MyDRC.Wait CLIENT timeout 
+          (err obj evt dat)←4↑r
+           :select evt
+           :case 'Block' 
+              messages,←⊂0 ⎕JSON⍣json⊢'Receive'LogTrace FromUtf8 dat
+           :case 'BlockLast'
+              :if 0<≢dat
+              messages,←⊂0 ⎕JSON⍣json⊢'Receive'LogTrace FromUtf8 dat
+              :endif
+              ok←1
+           :caseList 'Closed' 'Error'
+               ok←0  
+           :case 'Timeout'
+              done←1
+           :endSelect
+      :Else ⋄ ok←0
+      :EndIf 
+      :until done ∨~ok      
+
+      :If ~ok
           'Read'LogWarn'Connection failed: ',⍕r
           Terminate  ⍝ consider connection dead for good (avoid trying to read more)
       :EndIf
