@@ -18,6 +18,14 @@
 ⍝ - optional {host} is a string giving the ip address to connect to
 ⍝   {host} defaults to '127.0.0.1' which is the local machine
 
+⍝ Added shared public functions to Start, Connect to, Listen for and Wait for APL's
+
+⍝ StartAPL
+⍝ ListenForAPLs
+⍝ ConnectAPL
+⍝ WaitForAPL 
+
+
 
 ⍝ RIDE commands usually wait for a response,
 ⍝ which may be changing the prompt type, or touching a window (edit, tracer, dialog, etc.).
@@ -168,7 +176,7 @@
     :Field Public MULTITHREADING←IS181      ⍝ allow other threads to spuriously SetPrompt(1) - seems unavoidable since Dyalog v18.1
 
     :Field Public TIMEOUT←200               ⍝ maximum Conga timeout in milliseconds for responses that don't require significant computation
-    :Field Public BUFSIZE←2*21              ⍝ Conga buffer size. If you get an error 1135 during Negotiation increase the buffer size to allow space for Session in one block.
+    :Field Public shared BUFSIZE←2*21       ⍝ Conga buffer size. If you get an error 1135 during Negotiation increase the buffer size to allow space for Session in one block.
 
     :Field Private Shared ReadOnly LF←⎕UCS 10
     :Field Private Shared ReadOnly CR←⎕UCS 13
@@ -217,6 +225,99 @@
     IsInteger←{(0=≡⍵)∧(⍬≡0⍴⍵):⍵≡⌊⍵ ⋄ 0}
 
 
+⍝ Listen for new APL connecting back to us. This will only start the listener not return ghostriders.
+⍝ Call WaitForAPL to pick up APL that are trying to connect to us that we have not started out self.
+⍝ If we are Listening StartAPL will reverse direction and let the APL connect back to us.
+    ∇ r←ListenForAPLs;z
+      :Access Public Shared
+      LoadLibraries
+      :If 0=⊃r←MyDRC.Srv'GhostListener' '' 0 'BlkText'BUFSIZE('Magic'(MyDRC.Magic'RIDE'))
+          :if 0≠⊃z←MyDRC.SetProp'GhostListener' 'ConnectionOnly' 1
+              {}MyDRC.Close 'GhostListener'
+              r←(⊃z) ''
+          :endif
+      :EndIf
+    ∇
+
+
+
+⍝ StartAPL takes env as Argument and return an instance to a GhostRider
+⍝ if we have started to listen for incomming APL's we will start an APL and let the APL Connect back to us.
+⍝ otherwise we will start an APL make it listen and connect to it.
+    ∇ ghostinst←StartAPL args;host;port;env;runtime;RIDE_INIT;r;Process;Client;err;ip
+    ⍝ Start an APL and return an GhostRider instance controlling it
+      :Access Public shared
+      LoadLibraries
+      :if 0<≢names←MyDRC.Names '.'
+      :Andif names∊⊆'GhostListener'   ⍝ If we have started a listener we will let the slave connect back
+          (err ip)←MyDRC.GetProp'GhostListener' 'LocalAddr'
+          :if 'IPv6' (16⍴0) ≡ ip[1 3]
+             host←'[::1]'
+          :elseif 'IPv4' (4⍴0) ≡ ip[1 3]
+             host←'127.0.0.1'
+          :else
+             host← {(-(⌽⍵)⍳':')↓⍵  } 2⊃ip    
+          :endif
+          port←4⊃ip
+          RIDE_INIT←'poll:',host,':',⍕port
+      :Else
+          host←'127.0.0.1' ⋄ port←GetTcpPort
+          RIDE_INIT←'serve::',⍕port ⍝ only accept local connections
+      :EndIf
+      env←,⍕args
+      runtime←0  ⍝ otherwise we'd need to keep the interpreter busy
+      :If 0∊⍴('\sDYAPP='⎕S 0)env  ⍝ don't inherit some environment variables
+          env,←' DYAPP='
+      :EndIf
+          ⍝:If 0∊⍴('\sSESSION_FILE='⎕S 0)env  ⍝ don't inherit some environment variables
+          ⍝    env,←' SESSION_FILE='
+          ⍝:EndIf
+      Process←⎕NEW APLProcess(''env runtime RIDE_INIT)
+      ⎕DL 0.3  ⍝ ensure process doesn't exit early
+      :If Process.HasExited
+          'StartAPL'Error'Failed to start APLProcess: RIDE_INIT=',RIDE_INIT,' env=',env
+      :EndIf
+     
+      :If 'poll'≡4↑RIDE_INIT
+          :If 0=⊃r←MyDRC.Wait'GhostListener' 20000
+              (err obj evt dat)←4↑r
+          :AndIf 'Connect'≡evt
+              ghostinst←⎕NEW ⎕THIS('Connection'obj Process)
+     
+          :Else
+              'StartAPL'Error'APL did not connect back in 20 secs ',⍕Process.ID
+              Process.Kill
+          :EndIf
+      :Else
+          :If 0≠⊃(_ Client)←2↑r←MyDRC.Clt''host port'BlkText'BUFSIZE('Magic'(MyDRC.Magic'RIDE'))
+              'StartAPL'Error'Could not connect to server ',host,':',⍕port
+              Process.Kill
+          :EndIf
+          ghostinst←⎕NEW ⎕THIS('Connection'Client Process)
+     
+      :EndIf
+    ∇
+
+ ⍝ Connect to a running APL
+    ∇ ghostinst←ConnectAPL arg
+    ⍝ Connect to an APL and return an GhostRider instance controlling it
+    ⍝    R←ConnectAPL (port {host})
+      :Access PubLic Shared
+      ghostinst←⎕NEW ⎕THIS(arg)
+     
+    ∇
+⍝ We are listening wait for next incomming connection and return a ghostride instance to it.    
+    ∇ghostinst←WaitForAPL timeout;r;err;obj;evt;dat
+    :access public
+    :If 0=⊃r←MyDRC.Wait'GhostListener' timeout
+              (err obj evt dat)←4↑r
+     :AndIf 'Connect'≡evt
+              ghostinst←⎕NEW ⎕THIS('Connection'obj ⎕NULL)
+     :else
+        ghostinst←⎕NULL
+     :endif
+    ∇
+
     ∇ ok←LoadLibraries;Tool;where
     ⍝ Failure to load library will cause ⎕SE.SALT.Load to error
       :Access Shared
@@ -244,23 +345,30 @@
       port←4⊃addr
       CloseConga srv
     ∇
-    
-    ∇ok←NegotiateProtocol protocol;tm1;tm2
-    ⍝ Requires the instance to be connected.
-    :Access Public
-    tm1←'SupportedProtocols=',⍕protocol ⋄ tm2←'UsingProtocol=',⍕protocol
-    :if 1=≢('Negotiate'WaitFor 0)tm1  ⍝ first message is not JSON
-    :Andif Send tm1
-    :AndIf 1=≢('Negotiate'WaitFor 0)tm2  ⍝ second message is not JSON
-    :AndIf Send tm2
-    ok←1
-    :else 
-      ok←0
-    :endif
-    
 
+    ∇ ok←NegotiateProtocol protocol;tm1;tm2
+    ⍝ Requires the instance to be connected.
+      :Access Public
+      tm1←'SupportedProtocols=',⍕protocol ⋄ tm2←'UsingProtocol=',⍕protocol
+      :If 1=≢('Negotiate'WaitFor 0)tm1  ⍝ first message is not JSON
+      :AndIf Send tm1
+      :AndIf 1=≢('Negotiate'WaitFor 0)tm2  ⍝ second message is not JSON
+      :AndIf Send tm2
+          ok←1
+      :Else
+          ok←0
+      :EndIf
     ∇
-    
+
+
+    ∇ peer←GetPeer;r
+      :Access public
+      :If 0=⊃r←MyDRC.GetProp CLIENT'PeerAddr'
+          peer←2 2⊃r
+      :Else
+          peer←'unknown:unknown'
+      :EndIf
+    ∇
 
     ∇ Constructor0
       :Access Public
@@ -273,35 +381,43 @@
       :Implements Constructor
       ⎕RL←⍬ 1  ⍝ for ED and _RunQA
       LoadLibraries
-      :If (0∊⍴args)∨(''≡0⍴args)  ⍝ spawn a local Ride - args is {env}
-          host←'127.0.0.1' ⋄ port←GetTcpPort
-          env←,⍕args ⋄ RIDE_INIT←'serve::',⍕port ⍝ only accept local connections
-          runtime←0  ⍝ otherwise we'd need to keep the interpreter busy
-          :If 0∊⍴('\sDYAPP='⎕S 0)env  ⍝ don't inherit some environment variables
-              env,←' DYAPP='
-          :EndIf
+      :If 3=≢args
+      :AndIf 'Connection'≡1⊃args
+          CLIENT←2⊃args
+          PROCESS←3⊃args
+      :Else
+          :If (0∊⍴args)∨(''≡0⍴args)  ⍝ spawn a local Ride - args is {env}
+              host←'127.0.0.1' ⋄ port←GetTcpPort
+              env←,⍕args ⋄ RIDE_INIT←'serve::',⍕port ⍝ only accept local connections
+              runtime←0  ⍝ otherwise we'd need to keep the interpreter busy
+              :If 0∊⍴('\sDYAPP='⎕S 0)env  ⍝ don't inherit some environment variables
+                  env,←' DYAPP='
+              :EndIf
           ⍝:If 0∊⍴('\sSESSION_FILE='⎕S 0)env  ⍝ don't inherit some environment variables
           ⍝    env,←' SESSION_FILE='
           ⍝:EndIf
-          PROCESS←⎕NEW APLProcess(''env runtime RIDE_INIT)
-          ⎕DL 0.3  ⍝ ensure process doesn't exit early
-          :If PROCESS.HasExited
-              'Constructor'Error'Failed to start APLProcess: RIDE_INIT=',RIDE_INIT,' env=',env
+              PROCESS←⎕NEW APLProcess(''env runtime RIDE_INIT)
+              ⎕DL 0.3  ⍝ ensure process doesn't exit early
+              :If PROCESS.HasExited
+                  'Constructor'Error'Failed to start APLProcess: RIDE_INIT=',RIDE_INIT,' env=',env
+              :EndIf
+          :Else  ⍝ connect to an existing Ride - args is (port {host})
+              (port host)←2↑args,⊂''  ⍝ port is integer and must be specified
+              :If ⍬≢⍴port ⋄ :OrIf ⍬≢0⍴port ⋄ :OrIf port≠⌊port ⋄ :OrIf 0≠11○port ⋄ :OrIf port≤0
+                  'Constructor'Error'Port number must be positive integer: ',⍕port
+              :EndIf
+              :If 0∊⍴host ⋄ host←'127.0.0.1' ⋄ :EndIf  ⍝ default to local machine
+              args←''
+              PROCESS←⎕NULL  ⍝ no process started
           :EndIf
-      :Else  ⍝ connect to an existing Ride - args is (port {host})
-          (port host)←2↑args,⊂''  ⍝ port is integer and must be specified
-          :If ⍬≢⍴port ⋄ :OrIf ⍬≢0⍴port ⋄ :OrIf port≠⌊port ⋄ :OrIf 0≠11○port ⋄ :OrIf port≤0
-              'Constructor'Error'Port number must be positive integer: ',⍕port
+          :If 0≠⊃(_ CLIENT)←2↑r←MyDRC.Clt''host port'BlkText'BUFSIZE('Magic'(MyDRC.Magic'RIDE'))
+              'Constructor'Error'Could not connect to server ',host,':',⍕port
           :EndIf
-          :If 0∊⍴host ⋄ host←'127.0.0.1' ⋄ :EndIf  ⍝ default to local machine
-          args←''
-          PROCESS←⎕NULL  ⍝ no process started
       :EndIf
-      tm1←'SupportedProtocols=2' ⋄ tm2←'UsingProtocol=2'
-      ⎕DF('@',host,':',⍕port){(¯1↓⍵),⍺,(¯1↑⍵)}⍕⎕THIS
-      :If 0≠⊃(_ CLIENT)←2↑r←MyDRC.Clt''host port'BlkText' BUFSIZE ('Magic'  (MyDRC.Magic 'RIDE'))
-          'Constructor'Error'Could not connect to server ',host,':',⍕port
-      :ElseIf NegotiateProtocol 2
+     
+      ⎕DF('@',GetPeer){(¯1↓⍵),⍺,(¯1↑⍵)}⍕⎕THIS
+     
+      :If NegotiateProtocol 2
       :AndIf EmptyQueue'Identify'
       ⍝ from this point on, Windows interpreter may or may not send zero or more FocusThread or SetPromptType at different points in time
       :AndIf Send'["Identify",{"identity":1}]'
@@ -354,7 +470,7 @@
     ⍝ Send a message to the RIDE
       :Access Public
       :If 0=⎕NC'error' ⋄ error←1 ⋄ :EndIf
-      ok←0=⊃r←MyDRC.Send CLIENT( ToUtf8'Send'LogTrace msg)
+      ok←0=⊃r←MyDRC.Send CLIENT(ToUtf8'Send'LogTrace msg)
       :If error∧~ok
           'Send'Error⍕r
           Terminate
@@ -364,29 +480,29 @@
     ∇ messages←{timeout}Read json;ok;r;err;obj;evt;dat;done
     ⍝ Read message queue from the RIDE
       :Access Public
-      :If 0=⎕NC'timeout' ⋄ timeout←TIMEOUT ⋄ :EndIf  
+      :If 0=⎕NC'timeout' ⋄ timeout←TIMEOUT ⋄ :EndIf
       messages←0⍴⊂''
       done←0
-      :repeat
-      :If ok←0=⊃r←MyDRC.Wait CLIENT timeout 
-          (err obj evt dat)←4↑r
-           :select evt
-           :case 'Block' 
-              messages,←⊂0 ⎕JSON⍣json⊢'Receive'LogTrace FromUtf8 dat
-           :case 'BlockLast'
-              :if 0<≢dat
-              messages,←⊂0 ⎕JSON⍣json⊢'Receive'LogTrace FromUtf8 dat
-              :endif
-              ok←1
-           :caseList 'Closed' 'Error'
-               ok←0  
-           :case 'Timeout'
-              done←1
-           :endSelect
-      :Else ⋄ ok←0
-      :EndIf 
-      :until done ∨~ok      
-
+      :Repeat
+          :If ok←0=⊃r←MyDRC.Wait CLIENT timeout
+              (err obj evt dat)←4↑r
+              :Select evt
+              :Case 'Block'
+                  messages,←⊂0 ⎕JSON⍣json⊢'Receive'LogTrace FromUtf8 dat
+              :Case 'BlockLast'
+                  :If 0<≢dat
+                      messages,←⊂0 ⎕JSON⍣json⊢'Receive'LogTrace FromUtf8 dat
+                  :EndIf
+                  ok←1
+              :CaseList 'Closed' 'Error'
+                  ok←0
+              :Case 'Timeout'
+                  done←1
+              :EndSelect
+          :Else ⋄ ok←0
+          :EndIf
+      :Until done∨~ok
+     
       :If ~ok
           'Read'LogWarn'Connection failed: ',⍕r
           Terminate  ⍝ consider connection dead for good (avoid trying to read more)
