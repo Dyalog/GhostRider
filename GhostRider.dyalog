@@ -308,7 +308,7 @@
     ∇
 ⍝ We are listening wait for next incomming connection and return a ghostride instance to it.    
     ∇ghostinst←WaitForAPL timeout;r;err;obj;evt;dat
-    :access public
+    :access public  shared
     :If 0=⊃r←MyDRC.Wait'GhostListener' timeout
               (err obj evt dat)←4↑r
      :AndIf 'Connect'≡evt
